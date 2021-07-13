@@ -132,8 +132,3 @@ class Meter:
 
     def __exit__(self, exc_type, exc_value, traceback):
         self.session.close()
-
-
-if __name__ == "__main__":
-    # TODO arg parsing
-    pass

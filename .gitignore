@@ -4,3 +4,4 @@ build/
 nevamt3sdk/__pycache__/
 dist/
 src/*.egg-info/
+src/nevamt3sdk/__pycache__
