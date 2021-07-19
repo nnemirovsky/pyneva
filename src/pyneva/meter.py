@@ -131,7 +131,7 @@ class Meter:
         return self.Amperage(sum=w_sum, phase1=w1, phase2=w2, phase3=w3)
 
     @property
-    def serial_number(self) -> int:
+    def serial_number(self) -> str:
         if self._serial_num:
             return self._serial_num
         self.send_request(self.commands["serial_num"])
@@ -139,16 +139,9 @@ class Meter:
         return self._serial_num
 
     Status = namedtuple("Status", (
-        "data_memory_err",
-        "param_memory_err",
-        "measurement_err",
-        "clock_err",
-        "battery_discharged",
-        "programming_button_pressed",
-        "data_memory_doesnt_work",
-        "param_memory_doesnt_work",
-        "screw_terminal_cover_removed",
-        "load_connected",
+        "data_memory_err", "param_memory_err", "measurement_err", "clock_err",
+        "battery_discharged", "programming_button_pressed", "data_memory_doesnt_work",
+        "param_memory_doesnt_work", "screw_terminal_cover_removed", "load_connected",
         "load_disconnected"))
 
     @property
@@ -159,7 +152,8 @@ class Meter:
         bits = bits[:8] + bits[9:12]
         return self.Status(*map(lambda x: x == "1", bits))
 
-    def make_request(self, obis: str = "", mode: Literal["P", "W", "R"] = "R", data: bytes = b"") -> bytes:
+    def make_request(self, obis: str = "", mode: Literal["P", "W", "R"] = "R",
+                     data: bytes = b"") -> bytes:
         if type(obis) != str:
             raise TypeError(f"OBIS must be str, not {type(obis).__name__}")
 
@@ -186,7 +180,7 @@ class Meter:
 
         return request
 
-    def parse_response(self, response: bytes) -> Union[str, float, Tuple[Union[str, float]]]:
+    def parse_response(self, response: bytes) -> Union[str, float, Tuple[Union[str, float], ...]]:
         try:
             bracket_idx = response.index(b"(")
             response = response[bracket_idx + 1:-3]
@@ -235,3 +229,13 @@ class Meter:
 
     def __exit__(self, exc_type, exc_value, traceback):
         self.close_session()
+
+
+# if __name__ == "__main__":
+#     with Meter("COM4") as session:
+#         print("Device name: ", session)
+#         print("Total energy: ", session.total_energy)
+#         print("Voltage: ", session.voltage)
+#         print("Active power: ", session.amperage)
+#         print("Serial Number: ", session.serial_number)
+#         print("Status: ", session.status)
