@@ -175,6 +175,8 @@ class Meter:
     @property
     def tariff_schedules(self) -> Tuple[TariffSchedule, ...]:
         tariff_schedules = []
+        if not self.__used_tariff_schedules:
+            self.__used_tariff_schedules.add(1)
         for schedule_num in self.__used_tariff_schedules:
             obis_cmd = self.commands["tariff_schedule_cmd"] % f"{schedule_num:02X}"
             self.send_request(self.make_request(obis_cmd))
