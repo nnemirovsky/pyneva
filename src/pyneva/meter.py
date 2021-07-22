@@ -1,5 +1,6 @@
 from collections import namedtuple
 from typing import Literal, Tuple, Union
+import time
 import serial
 import re
 
@@ -9,13 +10,24 @@ class Meter:
     Custom library for working with electricity meters Neva MT 3xx via serial port.
     """
 
-    password = b""
-    _serial_num = ""
-    device_name = ""
-    init_baudrate = 300
-    working_baudrate = 9600
-    init_timeout = 1
-    working_timeout = 1
+    BAUDRATES = (300, 600, 1200, 2400, 4800, 9600)
+    __serial_num = None
+    __init_baudrate = BAUDRATES[0]
+    __timeout = 3
+    __used_tariff_schedules = set()
+
+    Status = namedtuple("Status",
+                        ("data_memory_err", "param_memory_err", "measurement_err", "clock_err",
+                         "battery_discharged", "programming_button_pressed",
+                         "data_memory_doesnt_work", "param_memory_doesnt_work",
+                         "screw_terminal_cover_removed", "load_connected", "load_disconnected"))
+    TotalEnergy = namedtuple("TotalEnergy", "sum T1 T2 T3 T4")
+    Voltage = namedtuple("Voltage", "phase1 phase2 phase3")
+    Amperage = namedtuple("Amperage", "sum phase1 phase2 phase3")
+    SeasonSchedule = namedtuple("SeasonSchedule", "month day weekday_skd sat_skd sun_skd")
+    SpecialDaysSchedule = namedtuple("SpecialDaysSchedule", "month day skd")
+    TariffSchedulePart = namedtuple("TariffSchedulePart", "hour minute T_num")
+    TariffSchedule = namedtuple("TariffSchedule", "parts")
 
     def __init__(self, port):
         self.port = port
@@ -23,7 +35,8 @@ class Meter:
             # /?!<CR><LF>
             "transfer_request": b"/?!\r\n",
             # <ACK>051<CR><LF>
-            "ack": b"\x06051\r\n",
+            "ack": b"\x060%i1\r\n",
+            # <SOH>B0<ETX><bcc>
             "end_conn": b"\x01B0\x03q",
             "total_energy": self.make_request("0F.08.80*FF"),
             "voltage_phase1": self.make_request("20.07.00*FF"),
@@ -35,6 +48,9 @@ class Meter:
             "amperage_sum": self.make_request("10.07.00*FF"),
             "serial_num": self.make_request("60.01.00*FF"),
             "status": self.make_request("60.05.00*FF"),
+            "season_schedule": self.make_request("0D.00.00*FF"),
+            "special_days": self.make_request("0B.00.00*FF"),
+            "tariff_schedule_cmd": "0A.%s.64*FF",
         }
         self.__start_session()
 
@@ -44,41 +60,39 @@ class Meter:
         """
 
         self.session = serial.Serial(port=self.port,
-                                     baudrate=self.init_baudrate,
+                                     baudrate=self.__init_baudrate,
                                      bytesize=serial.SEVENBITS,
                                      parity=serial.PARITY_EVEN,
                                      stopbits=serial.STOPBITS_ONE,
-                                     timeout=self.init_timeout)
+                                     timeout=self.__timeout)
 
         self.send_request(self.commands["transfer_request"])
 
         try:
-            self.device_name = self.get_response()[5:-2].decode("ascii")
+            resp = self.get_response(21)
+            working_baudrate_num = int(chr(resp[4]))
+            self.__working_baudrate = self.BAUDRATES[working_baudrate_num]
+            self.__device_name = resp[5:-2].decode("ascii")
         except IndexError:
             raise ConnectionError("Identity message format is wrong") from None
 
-        self.send_request(self.commands["ack"])
-        self.disconnect()
+        self.send_request(self.commands["ack"] % working_baudrate_num)
 
-        # Reopen port with new baudrate
-        self.session.baudrate = self.working_baudrate
-        self.connect()
+        time.sleep(.5)
+        self.session.flush()
+        # Change baudrate
+        self.session.baudrate = self.__working_baudrate
 
         try:
-            self.password = self.parse_response(self.get_response()).encode()
+            self.__password = self.parse_response(self.get_response(16)).encode()
         except ValueError:
             raise ConnectionError("Password message format is wrong, try again") from None
 
-        self.send_request(self.make_request(mode="P", data=self.password))
+        self.send_request(self.make_request(mode="P", data=self.__password))
 
-        msg = self.get_response()
+        msg = self.get_response(1)
         if msg != b"\x06":
             raise ConnectionError(f"Message is not ACK, message: {msg}")
-
-        # Change timeout
-        self.session.timeout = self.working_timeout
-
-    TotalEnergy = namedtuple("TotalEnergy", "sum T1 T2 T3 T4")
 
     @property
     def total_energy(self) -> TotalEnergy:
@@ -86,10 +100,10 @@ class Meter:
         Returns accumulated active energy.
         """
 
-        self.send_request(self.commands["total_energy"])
-        return self.TotalEnergy(*self.parse_response(self.get_response()))
+        resp_size = 62
 
-    Voltage = namedtuple("Voltage", "phase1 phase2 phase3")
+        self.send_request(self.commands["total_energy"])
+        return self.TotalEnergy(*self.parse_response(self.get_response(resp_size)))
 
     @property
     def voltage(self) -> Voltage:
@@ -97,18 +111,18 @@ class Meter:
         Returns current voltage of all phases.
         """
 
+        resp_size = 20
+
         self.send_request(self.commands["voltage_phase1"])
-        v1 = self.parse_response(self.get_response())
+        v1 = self.parse_response(self.get_response(resp_size))
 
         self.send_request(self.commands["voltage_phase2"])
-        v2 = self.parse_response(self.get_response())
+        v2 = self.parse_response(self.get_response(resp_size))
 
         self.send_request(self.commands["voltage_phase3"])
-        v3 = self.parse_response(self.get_response())
+        v3 = self.parse_response(self.get_response(resp_size))
 
         return self.Voltage(phase1=v1, phase2=v2, phase3=v3)
-
-    Amperage = namedtuple("Amperage", "sum phase1 phase2 phase3")
 
     @property
     def amperage(self) -> Amperage:
@@ -116,38 +130,83 @@ class Meter:
         Returns current active power (in watts) of all phases.
         """
 
+        resp_size = 20
+
         self.send_request(self.commands["amperage_sum"])
-        w_sum = self.parse_response(self.get_response())
+        w_sum = self.parse_response(self.get_response(resp_size))
 
         self.send_request(self.commands["amperage_phase1"])
-        w1 = self.parse_response(self.get_response())
+        w1 = self.parse_response(self.get_response(resp_size))
 
         self.send_request(self.commands["amperage_phase2"])
-        w2 = self.parse_response(self.get_response())
+        w2 = self.parse_response(self.get_response(resp_size))
 
         self.send_request(self.commands["amperage_phase3"])
-        w3 = self.parse_response(self.get_response())
+        w3 = self.parse_response(self.get_response(resp_size))
 
         return self.Amperage(sum=w_sum, phase1=w1, phase2=w2, phase3=w3)
 
     @property
-    def serial_number(self) -> str:
-        if self._serial_num:
-            return self._serial_num
-        self.send_request(self.commands["serial_num"])
-        self._serial_num = self.parse_response(self.get_response())
-        return self._serial_num
+    def season_schedule(self) -> Tuple[SeasonSchedule, ...]:
+        self.send_request(self.commands["season_schedule"])
+        zones = self.parse_response(self.get_response(144))
+        zones_parsed = []
+        for zone in zones:
+            if zone == "0000000000":
+                continue
+            zone = tuple(int(zone[i:i + 2]) for i in range(0, len(zone), 2))
+            self.__used_tariff_schedules.update(zone[2:])
+            zones_parsed.append(self.SeasonSchedule(*zone))
+        return tuple(zones_parsed)
 
-    Status = namedtuple("Status", (
-        "data_memory_err", "param_memory_err", "measurement_err", "clock_err",
-        "battery_discharged", "programming_button_pressed", "data_memory_doesnt_work",
-        "param_memory_doesnt_work", "screw_terminal_cover_removed", "load_connected",
-        "load_disconnected"))
+    @property
+    def special_days_schedule(self) -> Tuple[SpecialDaysSchedule, ...]:
+        self.send_request(self.commands["special_days"])
+        days = self.parse_response(self.get_response(236))
+        days_parsed = []
+        for day in days:
+            if day == "000000":
+                continue
+            day = tuple([int(day[:2]), int(day[2:4]), int(day[4:])])
+            self.__used_tariff_schedules.add(day[-1])
+            days_parsed.append(self.SpecialDaysSchedule(*days))
+        return tuple(days_parsed)
+
+    @property
+    def tariff_schedules(self) -> Tuple[TariffSchedule, ...]:
+        tariff_schedules = []
+        for schedule_num in self.__used_tariff_schedules:
+            obis_cmd = self.commands["tariff_schedule_cmd"] % f"{schedule_num:02X}"
+            self.send_request(self.make_request(obis_cmd))
+            resp = self.get_response(68)
+            schedule = self.parse_response(resp)
+            schedule_parsed = []
+            for part in schedule:
+                if part == "000000":
+                    break
+                # part = tuple(int(part[i:i + 2]) for i in range(0, len(part), 2))
+                part = tuple([int(part[:2]), int(part[2:4]), int(part[4:])])
+                schedule_parsed.append(self.TariffSchedulePart(*part))
+            if schedule_parsed:
+                tariff_schedules.append(self.TariffSchedule(tuple(schedule_parsed)))
+        return tuple(tariff_schedules)
+
+    @property
+    def serial_number(self) -> str:
+        if self.__serial_num:
+            return self.__serial_num
+        self.send_request(self.commands["serial_num"])
+        self.__serial_num = self.parse_response(self.get_response(21))
+        return self.__serial_num
+
+    @property
+    def device_name(self) -> str:
+        return self.__device_name
 
     @property
     def status(self) -> Status:
         self.send_request(self.commands["status"])
-        response = self.parse_response(self.get_response())
+        response = self.parse_response(self.get_response(17))
         bits = f'{int(response, 16):0>16b}'
         bits = bits[:8] + bits[9:12]
         return self.Status(*map(lambda x: x == "1", bits))
@@ -205,7 +264,9 @@ class Meter:
     def send_request(self, request: bytes):
         self.session.write(request)
 
-    def get_response(self) -> bytes:
+    def get_response(self, size: int = None) -> bytes:
+        if size:
+            return self.session.read(size)
         return self.session.readall()
 
     def disconnect(self):
@@ -216,7 +277,9 @@ class Meter:
 
     def close_session(self):
         self.send_request(self.commands["end_conn"])
-        self.disconnect()
+        self.session.flush()
+        self.session.close()
+        self.session.__del__()
 
     def __str__(self) -> str:
         return self.device_name
@@ -229,13 +292,3 @@ class Meter:
 
     def __exit__(self, exc_type, exc_value, traceback):
         self.close_session()
-
-
-# if __name__ == "__main__":
-#     with Meter("COM4") as session:
-#         print("Device name: ", session)
-#         print("Total energy: ", session.total_energy)
-#         print("Voltage: ", session.voltage)
-#         print("Active power: ", session.amperage)
-#         print("Serial Number: ", session.serial_number)
-#         print("Status: ", session.status)

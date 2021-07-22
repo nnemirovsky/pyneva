@@ -17,7 +17,4 @@ setup(
     packages=find_packages("src"),
     install_requires=["pyserial"],
     python_requires=">=3.7",
-    # setup_requires=["pytest-runner"],
-    # tests_require=["pytest==6.2.4"],
-    # test_suite="tests",
 )
