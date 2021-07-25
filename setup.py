@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="pyneva",
-    version="0.4.0",
+    version="0.5",
     description="Custom library for electricity meters Neva MT 3xx",
     long_description=long_description,
     long_description_content_type="text/markdown",
@@ -14,6 +14,7 @@ setup(
     url="https://github.com/vazelegend/pyneva",
     license="MIT",
     packages=find_packages(),
-    install_requires=["pyserial"],
+    install_requires=["pyserial>=3.5"],
     python_requires=">=3.9",
+    platforms="any",
 )
