@@ -1,6 +1,6 @@
 from .core import Meter
 import argparse
-from .tools import make_request
+from . import tools
 
 
 def is_property(attr: str) -> bool:
@@ -28,8 +28,8 @@ try:
         if len(args.obis) != 0:
             print("\nOBIS:")
             for code in args.obis:
-                meter.send_request(make_request(code))
-                print(f"{code}\t", meter.parse_response(meter.get_response()))
+                meter.send_request(tools.make_request(code))
+                print(f"{code}\t", tools.parse_response(meter.get_response()))
 
         if len(args.func) != 0:
             print("\nFunctions:")
