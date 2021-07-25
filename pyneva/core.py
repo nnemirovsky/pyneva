@@ -1,3 +1,5 @@
+from time import sleep
+
 import serial
 from .types import *
 from . import tools
@@ -38,27 +40,27 @@ class Meter:
             self.__working_baudrate = self.BAUDRATES[working_baudrate_num]
             self.__device_name = resp[5:-2].decode("ascii")
         except IndexError:
+            self.close_session()
             raise ConnectionError("identity message format is wrong") from None
 
         self.send_request(tools.Commands.ack % working_baudrate_num)
 
-        # Flushing data before closing port
-        self.session.flush()
-
-        # Reopen port with new baudrate
-        self.disconnect()
+        # Flushing data before changing baudrate
+        # self.session.flush()
+        sleep(.3)
+        # Reconfigure port with new baudrate
         self.session.baudrate = self.__working_baudrate
-        self.connect()
 
         try:
             self.__password = tools.parse_response(self.get_response(16)).encode()
         except ValueError:
+            self.close_session()
             raise ConnectionError("password message format is wrong, try again") from None
 
         self.send_request(tools.make_request(mode="P", data=self.__password))
 
-        msg = self.get_response(1)
-        if msg != b"\x06":
+        if msg := self.get_response(1) != b"\x06":
+            self.close_session()
             raise ConnectionError(f"message is not ACK, message: {msg}")
 
     @property
@@ -168,7 +170,7 @@ class Meter:
         if not self.__used_tariff_schedules:
             self.__used_tariff_schedules.add(1)
         for schedule_num in self.__used_tariff_schedules:
-            obis_cmd = tools.Commands.tariff_schedule_cmd % f"{schedule_num:02X}"
+            obis_cmd = tools.Commands.tariff_schedule_obis % f"{schedule_num:02X}"
             self.send_request(tools.make_request(obis_cmd))
             resp = self.get_response(68)
             schedule = tools.parse_response(resp)
@@ -209,7 +211,7 @@ class Meter:
     def get_response(self, size: int = None, expected: bytes = b"\x03") -> bytes:
         """
         Returns raw bytes response from serial port.
-        Without args (by default) it reads up to expected ETX char (\x03).
+        Without args (by default) it reads up to expected ETX char.
         if size was specified it reads size bytes.
         if expected == None read all before timeout.
         """
@@ -227,9 +229,10 @@ class Meter:
         self.session.open()
 
     def close_session(self):
-        self.send_request(tools.Commands.end_conn)
-        self.session.flush()
-        self.session.close()
+        if self.session.is_open:
+            self.send_request(tools.Commands.end_conn)
+            self.session.flush()
+            self.session.close()
         self.session.__del__()
 
     def __str__(self) -> str:

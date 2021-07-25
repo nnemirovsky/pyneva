@@ -2,7 +2,12 @@ from .core import Meter
 import argparse
 from .tools import make_request
 
-FUNCTIONS = frozenset(filter(lambda attr: type(getattr(Meter, attr)) == property, dir(Meter)))
+
+def is_property(attr: str) -> bool:
+    return type(getattr(Meter, attr)) == property
+
+
+FUNCTIONS = frozenset(filter(is_property, dir(Meter)))
 
 parser = argparse.ArgumentParser(description="CLI version does not support write mode!\n")
 

@@ -76,4 +76,4 @@ class Commands:
     status = make_request("60.05.00*FF")
     season_schedule = make_request("0D.00.00*FF")
     special_days = make_request("0B.00.00*FF")
-    tariff_schedule_cmd = "0A.%s.64*FF"
+    tariff_schedule_obis = "0A.%s.64*FF"
