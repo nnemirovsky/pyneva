@@ -1,14 +1,14 @@
-from pyneva.meter import Meter
+from .core import Meter
 import argparse
+from .tools import make_request
 
-FUNCTIONS = ("total_energy", "voltage", "amperage", "serial_number", "status", "season_schedule",
-             "tariff_schedules", "special_days_schedule")
+FUNCTIONS = frozenset(filter(lambda attr: type(getattr(Meter, attr)) == property, dir(Meter)))
 
 parser = argparse.ArgumentParser(description="CLI version does not support write mode!\n")
 
-parser.add_argument("--obis", nargs='*', default="", help="Specify OBIS codes")
+parser.add_argument("--obis", nargs='*', default="", help="Specify OBIS code(-s)")
 parser.add_argument("--func", nargs='*', default="", choices=FUNCTIONS,
-                    help="Specify prepared functions")
+                    help="Specify prepared function(-s)")
 parser.add_argument("-p", "--port", required=True, help="Specify serial port interface")
 
 args = parser.parse_args()
@@ -17,19 +17,19 @@ if len(args.obis) == 0 and len(args.func) == 0:
     parser.error("at least one of --obis and --func required")
 
 try:
-    with Meter(args.port) as session:
-        print(f"Connected to: {session}")
+    with Meter(args.port) as meter:
+        print(f"Connected to: {meter}")
 
         if len(args.obis) != 0:
             print("\nOBIS:")
             for code in args.obis:
-                session.send_request(session.make_request(code))
-                print(f"{code}\t", session.parse_response(session.get_response()))
+                meter.send_request(make_request(code))
+                print(f"{code}\t", meter.parse_response(meter.get_response()))
 
         if len(args.func) != 0:
             print("\nFunctions:")
             for func in args.func:
-                print(f"{func}\t", getattr(session, func))
+                print(f"{func}\t", getattr(meter, func))
 
 except ConnectionError as e:
     parser.error(str(e))

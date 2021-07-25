@@ -1,7 +1,5 @@
 .venv/
 .vscode/
-.idea/
 build/
 dist/
-src/*.egg-info/
-src/pyneva/__pycache__
+*.egg-info/
