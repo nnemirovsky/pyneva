@@ -36,7 +36,7 @@ class ActivePower(NamedTuple):
     phaseC: float
 
 
-class SeasonSchedule(NamedTuple):
+class SeasonalSchedule(NamedTuple):
     month: int
     day: int
     weekday_skd_num: int

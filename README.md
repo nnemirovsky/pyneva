@@ -64,5 +64,5 @@ with Meter("COM4") as session:
     # (TariffSchedule(parts=(TariffSchedulePart(hour=7, minute=0, T_num=1), TariffSchedulePart(hour=23, minute=0, T_num=2))),)
     # Returns tuple with tariff schedules (TariffSchedule objects).
     # Each tariff schedule contains parts of the schedule (TariffSchedulePart objects).
-    # Each schedule part describes from what time of day the tariff starts (tariff number (T1, T2, T3, T4)).
+    # Each schedule part describes from what time of day the tariff starts and tariff number (T1, T2, T3, T4).
 ```
