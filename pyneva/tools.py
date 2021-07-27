@@ -44,7 +44,7 @@ def parse_response(response: bytes) -> Union[str, float, tuple[Union[str, float]
     Parsing bytes response.
     Returns str or float, or tuple with str or float, depending on the response type.
     """
-    if type(response) != bytes:
+    if not isinstance(response, bytes):
         raise TypeError(f"response must be bytes, not {type(response).__name__}")
     try:
         response = response[response.index(b"(") + 1:response.index(b")")]

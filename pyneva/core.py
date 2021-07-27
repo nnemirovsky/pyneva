@@ -7,16 +7,16 @@ from .types import *
 
 
 class Meter:
-    """Library for working with electricity meters Neva MT 3xx via serial port."""
+    """Class for working with electricity meters Neva MT 3xx."""
 
     __baudrates = (300, 600, 1200, 2400, 4800, 9600)
     __init_baudrate = __baudrates[0]
     __timeout = 3
     __serial_num = None
     __used_tariff_schedules = set()
+    __is_rfc2217 = False
 
     def __init__(self, device: str):
-        """Pass serial device or ip:port of the RFC2217 server."""
         self.__device = device
         self.__start_session()
 
@@ -24,8 +24,11 @@ class Meter:
         """Starting serial session, sending initial commands."""
         serial_cls = "Serial"
         if ("." or ":") in self.__device:
-            self.__device = f"rfc2217://{self.__device}"
+            if (protocol := "rfc2217://") not in self.__device:
+                self.__device = protocol + self.__device
             serial_cls = "serial_for_url"
+            self.__is_rfc2217 = True
+
         self.__session = getattr(serial, serial_cls)(
             self.__device, baudrate=self.__init_baudrate, bytesize=serial.SEVENBITS,
             parity=serial.PARITY_EVEN, stopbits=serial.STOPBITS_ONE, timeout=self.__timeout
@@ -50,7 +53,7 @@ class Meter:
 
         try:
             resp_size = 16
-            if isinstance(self.__session, serial.rfc2217.Serial):
+            if self.__is_rfc2217:
                 resp_size -= 1
             self.__password = tools.parse_response(self.get_response(resp_size)).encode()
         except ValueError:
@@ -210,21 +213,27 @@ class Meter:
         return self.__device_name
 
     def send_request(self, request: bytes):
-        """Sends raw bytes to meter."""
+        """Sends sequence of bytes to meter."""
         self.__session.write(request)
 
     def get_response(self, size: int = None, expected: bytes = b"\x03") -> bytes:
         """
-        Returns raw bytes response from serial port.
+        Returns sequence of bytes from meter.
         Without args (by default) it reads up to expected ETX char.
-        if size was specified it reads size bytes.
-        if expected == None read all before timeout.
+        If size was specified it reads size bytes.
+        If expected == None and size == None and session by RFC2217 protocol
+        read all before timeout.
         """
-        if size:
+        if self.__is_rfc2217 and not size:
+            return self.__session.readall()
+        elif size:
             return self.__session.read(size)
-        if expected:
-            return self.__session.read_until(expected)
-        return self.__session.readall()
+        elif expected:
+            resp = self.__session.read_until(expected)
+            self.__session.flushInput()
+            return resp
+        elif not size and not expected:
+            return self.__session.readall()
 
     def close_session(self):
         """Closes serial session and clears resources."""
@@ -237,7 +246,7 @@ class Meter:
         return self.device_name
 
     def __repr__(self) -> str:
-        return f"Meter({self.__port!r})"
+        return f"Meter({self.__device!r})"
 
     def __enter__(self):
         return self
