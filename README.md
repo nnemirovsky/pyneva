@@ -50,13 +50,13 @@ with Meter("COM4") as session:
     print(session.active_power)
     # ActivePower(sum=1968.8, phaseA=5.0, phaseB=1833.4, phaseC=130.3)
     
-    print(session.season_schedule)
+    print(session.seasonal_schedules)
     # (SeasonSchedule(month=1, day=1, weekday_skd_num=1, sat_skd_num=1, sun_skd_num=1),)
     # Returns tuple with seasonal schedules (SeasonSchedule objects).
     # Each schedule specifies from which date the tariff starts,
     # and the numbers of tariff schedules on weekdays, Saturdays, Sundays separately.
     
-    print(session.special_days_schedule)
+    print(session.special_days_schedules)
     # ()
     # Returns empty tuple if you have no special days tariff schedules (max 32 days)
     
