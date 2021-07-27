@@ -1,8 +1,9 @@
 from time import sleep
 
 import serial
-from .types import *
+
 from . import tools
+from .types import *
 
 
 class Meter:
@@ -14,18 +15,21 @@ class Meter:
     __serial_num = None
     __used_tariff_schedules = set()
 
-    def __init__(self, port):
-        self.__port = port
+    def __init__(self, device: str):
+        """Pass serial device or ip:port of the RFC2217 server."""
+        self.__device = device
         self.__start_session()
 
     def __start_session(self):
         """Starting serial session, sending initial commands."""
-        self.__session = serial.Serial(port=self.__port,
-                                       baudrate=self.__init_baudrate,
-                                       bytesize=serial.SEVENBITS,
-                                       parity=serial.PARITY_EVEN,
-                                       stopbits=serial.STOPBITS_ONE,
-                                       timeout=self.__timeout)
+        serial_cls = "Serial"
+        if ("." or ":") in self.__device:
+            self.__device = f"rfc2217://{self.__device}"
+            serial_cls = "serial_for_url"
+        self.__session = getattr(serial, serial_cls)(
+            self.__device, baudrate=self.__init_baudrate, bytesize=serial.SEVENBITS,
+            parity=serial.PARITY_EVEN, stopbits=serial.STOPBITS_ONE, timeout=self.__timeout
+        )
 
         self.send_request(tools.Commands.transfer_request)
         try:
@@ -45,7 +49,10 @@ class Meter:
         self.__session.baudrate = self.__working_baudrate
 
         try:
-            self.__password = tools.parse_response(self.get_response(16)).encode()
+            resp_size = 16
+            if isinstance(self.__session, serial.rfc2217.Serial):
+                resp_size -= 1
+            self.__password = tools.parse_response(self.get_response(resp_size)).encode()
         except ValueError:
             self.close_session()
             raise ConnectionError("password message format is wrong, try again") from None

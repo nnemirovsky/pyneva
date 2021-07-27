@@ -47,7 +47,7 @@ def parse_response(response: bytes) -> Union[str, float, tuple[Union[str, float]
     if type(response) != bytes:
         raise TypeError(f"response must be bytes, not {type(response).__name__}")
     try:
-        response = response.split(b"(")[1].split(b")")[0]
+        response = response[response.index(b"(") + 1:response.index(b")")]
     except (IndexError, ValueError):
         raise ValueError(f"invalid response format, response: {response}") from None
 

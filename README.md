@@ -1,39 +1,36 @@
 ## Library for electricity meters Neva MT 3xx
 
-Working via serial port using protocol IEC 61107 (currently IEC 62056-21) and OBIS codes
+Working via serial port or RFC2217 server using protocol IEC 61107 (currently IEC 62056-21) and OBIS codes.
 
 ## Installation
-
-### From PyPI
 
 ```shell
 python -m pip install pyneva
 ```
 
-### Development environment
+## Usage examples
+
+### From CLI
 
 ```shell
-git clone https://github.com/vazelegend/pyneva
-cd pyneva
-python -m venv .venv
-````
+$ python -m pyneva -p 192.168.88.109:1884 --func total_energy active_power --obis 60.01.00*FF
+Connected to: NEVAMT324.1106
 
-```shell
-source ./.venv/bin/activate #Linux
-or
-.\.venv\Scripts\activate #Windows
+OBIS:
+60.01.00*FF      60089784
+
+Functions:
+total_energy     TotalEnergy(total=16393.23, T1=12827.84, T2=3565.39, T3=0.0, T4=0.0)
+active_power     ActivePower(sum=2017.8, phaseA=1681.9, phaseB=201.4, phaseC=134.4)
 ```
 
-```shell
-python -m pip install -r requirements.txt
-```
-
-## Usage
+### From code
 
 ```python
 from pyneva import Meter
 
-# /dev/ttyX for linux
+# Pass serial device or ip:port of the RFC2217 server 
+# configured in telnet mode with remctl option
 with Meter("COM4") as session:
     print(session.device_name)
     # NEVAMT324.1106
