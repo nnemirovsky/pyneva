@@ -1,9 +1,11 @@
+from datetime import datetime
 from time import sleep
 
 import serial
+from serial.rfc2217 import Serial as rfc2217Serial
 
-from . import tools
 from .types import *
+from . import tools
 
 
 class Meter:
@@ -14,81 +16,80 @@ class Meter:
     __timeout = 3
     __serial_num = None
     __used_tariff_schedules = set()
-    __is_rfc2217 = False
 
-    def __init__(self, device: str):
+    def __init__(self, device: str, address: str = ""):
         self.__device = device
+        self.__address = address
+        self.__session = serial.serial_for_url(self.__device, baudrate=self.__init_baudrate,
+                                               bytesize=serial.SEVENBITS,
+                                               parity=serial.PARITY_EVEN,
+                                               stopbits=serial.STOPBITS_ONE,
+                                               timeout=self.__timeout)
+        self.__is_rfc2217 = isinstance(self.__session, rfc2217Serial)
         self.__start_session()
 
     def __start_session(self):
-        """Starting serial session, sending initial commands."""
-        serial_cls = "Serial"
-        if ("." or ":") in self.__device:
-            if (protocol := "rfc2217://") not in self.__device:
-                self.__device = protocol + self.__device
-            serial_cls = "serial_for_url"
-            self.__is_rfc2217 = True
+        """Starting serial session by protocol 61107 in programming mode."""
+        # Send request message
+        self.send_request(b"/?%s!\r\n" % self.__address.encode("ascii"))
 
-        self.__session = getattr(serial, serial_cls)(
-            self.__device, baudrate=self.__init_baudrate, bytesize=serial.SEVENBITS,
-            parity=serial.PARITY_EVEN, stopbits=serial.STOPBITS_ONE, timeout=self.__timeout
-        )
-
-        self.send_request(tools.Commands.transfer_request)
+        # Read identification message
         try:
-            resp = self.get_response(21)
-            working_baudrate_num = int(chr(resp[4]))
-            self.__working_baudrate = self.__baudrates[working_baudrate_num]
-            self.__device_name = resp[5:-2].decode("ascii")
-        except IndexError:
-            self.close_session()
-            raise ConnectionError("identity message format is wrong") from None
+            msg = tools.parse_id_msg(self.get_response(21))
+            self.__working_baudrate = self.__baudrates[msg.baudrate_num]
+            self.__device_name = msg.id
+        except ValueError as e:
+            self.__session.__del__()
+            raise ConnectionError(e) from None
 
-        self.send_request(tools.Commands.ack % working_baudrate_num)
+        # Send acknowledgement message, programming mode
+        self.send_request(b"\x060%i1\r\n" % msg.baudrate_num)
 
-        # Pause before changing baudrate
+        # Changing baudrate
         sleep(.3)
-        # Reconfigure port with new baudrate
         self.__session.baudrate = self.__working_baudrate
 
+        # Read password message
         try:
-            resp_size = 16
-            if self.__is_rfc2217:
-                resp_size -= 1
-            self.__password = tools.parse_response(self.get_response(resp_size)).encode()
-        except ValueError:
-            self.close_session()
-            raise ConnectionError("password message format is wrong, try again") from None
+            resp_size = 15 if self.__is_rfc2217 else 16
+            resp = self.get_response(resp_size)
+            resp = (b"\x01" + resp) if self.__is_rfc2217 else resp
+            self.__password = tools.parse_password_msg(resp)
+        except ValueError as e:
+            self.__session.__del__()
+            raise ConnectionError(e)
 
-        self.send_request(tools.make_request(mode="P", data=self.__password))
+        # Send password comparison command message
+        self.send_request(tools.make_cmd_msg(mode="P", data=self.__password))
 
+        # Read confirmation message
         if msg := self.get_response(1) != b"\x06":
-            self.close_session()
+            self.__session.__del__()
             raise ConnectionError(f"message is not ACK, message: {msg}")
 
     @property
     def total_energy(self) -> TotalEnergy:
         """Returns сumulative active energy in tariffs T1, T2, T3, T4 and total [kWh]."""
         self.send_request(tools.Commands.total_energy)
-        return TotalEnergy(*tools.parse_response(self.get_response(62)))
+        return TotalEnergy(*tools.parse_data_msg(self.get_response(62)).data)
 
     @property
     def voltage_a(self) -> float:
         """Returns instantaneous voltage in phase A (L1) [V]."""
         self.send_request(tools.Commands.voltage_A)
-        return tools.parse_response(self.get_response(20))
+        return tools.parse_data_msg(self.get_response(20)).data
 
     @property
     def voltage_b(self) -> float:
         """Returns instantaneous voltage in phase B (L2) [V]."""
         self.send_request(tools.Commands.voltage_B)
-        return tools.parse_response(self.get_response(20))
+        return tools.parse_data_msg(self.get_response(20)).data
 
     @property
     def voltage_c(self) -> float:
         """Returns instantaneous voltage in phase C (L3) [V]."""
         self.send_request(tools.Commands.voltage_C)
-        return tools.parse_response(self.get_response(20))
+        return tools.parse_data_msg(self.get_response(20)).data
 
     @property
     def voltage(self) -> Voltage:
@@ -99,25 +100,25 @@ class Meter:
     def active_power_a(self) -> float:
         """Returns active instantaneous power in phase A (L1) [W]."""
         self.send_request(tools.Commands.active_power_A)
-        return tools.parse_response(self.get_response(20))
+        return tools.parse_data_msg(self.get_response(20)).data
 
     @property
     def active_power_b(self) -> float:
         """Returns active instantaneous power in phase B (L2) [W]."""
         self.send_request(tools.Commands.active_power_B)
-        return tools.parse_response(self.get_response(20))
+        return tools.parse_data_msg(self.get_response(20)).data
 
     @property
     def active_power_c(self) -> float:
         """Returns active instantaneous power in phase C (L3) [W]."""
         self.send_request(tools.Commands.active_power_C)
-        return tools.parse_response(self.get_response(20))
+        return tools.parse_data_msg(self.get_response(20)).data
 
     @property
     def active_power_sum(self) -> float:
         """Returns sum of active instantaneous power of all phases [W]."""
         self.send_request(tools.Commands.active_power_sum)
-        return tools.parse_response(self.get_response(20))
+        return tools.parse_data_msg(self.get_response(20)).data
 
     @property
     def active_power(self) -> ActivePower:
@@ -127,6 +128,24 @@ class Meter:
                            phaseB=self.active_power_b,
                            phaseC=self.active_power_c)
 
+    # @property
+    # def seasonal_schedules(self) -> tuple[SeasonalSchedule, ...]:
+    #     """
+    #     Returns tuple with seasonal schedules.
+    #     Each schedule specifies from which date the tariff starts,
+    #     and the numbers of tariff schedules on weekdays, Saturdays, Sundays separately.
+    #     """
+    #     self.send_request(tools.Commands.season_schedule)
+    #     zones = tools.parse_data_msg(self.get_response(144)).data
+    #     zones_parsed = []
+    #     for zone in zones:
+    #         if not int(zone):
+    #             continue
+    #         zone = tuple(int(zone[i:i + 2]) for i in range(0, len(zone), 2))
+    #         self.__used_tariff_schedules.update(zone[2:])
+    #         zones_parsed.append(SeasonalSchedule(*zone))
+    #     return tuple(zones_parsed)
+
     @property
     def seasonal_schedules(self) -> tuple[SeasonalSchedule, ...]:
         """
@@ -134,16 +153,29 @@ class Meter:
         Each schedule specifies from which date the tariff starts,
         and the numbers of tariff schedules on weekdays, Saturdays, Sundays separately.
         """
-        self.send_request(tools.Commands.season_schedule)
-        zones = tools.parse_response(self.get_response(144))
-        zones_parsed = []
-        for zone in zones:
-            if zone == "0000000000":
-                continue
-            zone = tuple(int(zone[i:i + 2]) for i in range(0, len(zone), 2))
-            self.__used_tariff_schedules.update(zone[2:])
-            zones_parsed.append(SeasonalSchedule(*zone))
-        return tuple(zones_parsed)
+        self.send_request(tools.Commands.seasonal_schedules)
+        seasons = tools.parse_data_msg(self.get_response(144)).data
+        seasons = tuple(map(lambda skd: SeasonalSchedule(*skd), tools.parse_schedules(seasons)))
+        for season in seasons:
+            self.__used_tariff_schedules.update(season[2:])
+        return seasons
+
+    # @property
+    # def special_days_schedules(self) -> tuple[SpecialDaysSchedule, ...]:
+    #     """
+    #     Returns tuple with special days schedules.
+    #     Each schedule includes date and tariff schedule number.
+    #     """
+    #     self.send_request(tools.Commands.special_days)
+    #     days = tools.parse_data_msg(self.get_response(236)).data
+    #     days_parsed = []
+    #     for day in days:
+    #         if not int(day):
+    #             continue
+    #         day = tuple(int(day[i:i + 2]) for i in range(0, len(day), 2))
+    #         self.__used_tariff_schedules.add(day[-1])
+    #         days_parsed.append(SpecialDaysSchedule(*day))
+    #     return tuple(days_parsed)
 
     @property
     def special_days_schedules(self) -> tuple[SpecialDaysSchedule, ...]:
@@ -151,16 +183,38 @@ class Meter:
         Returns tuple with special days schedules.
         Each schedule includes date and tariff schedule number.
         """
-        self.send_request(tools.Commands.special_days)
-        days = tools.parse_response(self.get_response(236))
-        days_parsed = []
-        for day in days:
-            if day == "000000":
-                continue
-            day = tuple([int(day[:2]), int(day[2:4]), int(day[4:])])
-            self.__used_tariff_schedules.add(day[-1])
-            days_parsed.append(SpecialDaysSchedule(*days))
-        return tuple(days_parsed)
+        self.send_request(tools.Commands.special_days_schedules)
+        days = tools.parse_data_msg(self.get_response(236)).data
+        days = tuple(map(lambda skd: SpecialDaysSchedule(*skd), tools.parse_schedules(days)))
+        self.__used_tariff_schedules.update(map(lambda x: x.skd_num, days))
+        return days
+
+    # @property
+    # def tariff_schedules(self) -> tuple[TariffSchedule, ...]:
+    #     """
+    #     Returns tuple with tariff schedules.
+    #     Each tariff schedule contains parts of the schedule.
+    #     Each schedule part describes from what time of day the tariff starts,
+    #     and tariff number.
+    #     """
+    #     tariff_schedules = []
+    #     if not self.__used_tariff_schedules:
+    #         self.__used_tariff_schedules.add(1)
+    #     for schedule_num in self.__used_tariff_schedules:
+    #         obis_cmd = tools.Commands.tariff_schedule_obis % f"{schedule_num:02X}"
+    #         self.send_request(tools.make_cmd_msg(obis_cmd))
+    #         resp = self.get_response(68)
+    #         schedule = tools.parse_data_msg(resp).data
+    #         schedule_parsed = []
+    #         for part in schedule:
+    #             if part == "000000":
+    #                 break
+    #             # part = tuple(int(part[i:i + 2]) for i in range(0, len(part), 2))
+    #             part = tuple([int(part[:2]), int(part[2:4]), int(part[4:])])
+    #             schedule_parsed.append(TariffSchedulePart(*part))
+    #         if schedule_parsed:
+    #             tariff_schedules.append(TariffSchedule(tuple(schedule_parsed)))
+    #     return tuple(tariff_schedules)
 
     @property
     def tariff_schedules(self) -> tuple[TariffSchedule, ...]:
@@ -175,25 +229,28 @@ class Meter:
             self.__used_tariff_schedules.add(1)
         for schedule_num in self.__used_tariff_schedules:
             obis_cmd = tools.Commands.tariff_schedule_obis % f"{schedule_num:02X}"
-            self.send_request(tools.make_request(obis_cmd))
+            self.send_request(tools.make_cmd_msg(obis_cmd))
             resp = self.get_response(68)
-            schedule = tools.parse_response(resp)
-            schedule_parsed = []
-            for part in schedule:
-                if part == "000000":
-                    break
-                # part = tuple(int(part[i:i + 2]) for i in range(0, len(part), 2))
-                part = tuple([int(part[:2]), int(part[2:4]), int(part[4:])])
-                schedule_parsed.append(TariffSchedulePart(*part))
-            if schedule_parsed:
-                tariff_schedules.append(TariffSchedule(tuple(schedule_parsed)))
+            schedule_part = tools.parse_data_msg(resp).data
+            schedule_part = tuple(
+                map(lambda skd: TariffSchedulePart(*skd), tools.parse_schedules(schedule_part))
+            )
+            if schedule_part:
+                tariff_schedules.append(TariffSchedule(schedule_part))
         return tuple(tariff_schedules)
+
+    @property
+    def date(self) -> datetime.date:
+        """Returns current date from the meter."""
+        self.send_request(tools.Commands.date)
+        date = tools.parse_data_msg(self.get_response(19)).data
+        return datetime.strptime(date, "%y%m%d").date()
 
     @property
     def status(self) -> Status:
         """Returns status of meter errors."""
         self.send_request(tools.Commands.status)
-        response = tools.parse_response(self.get_response(17))
+        response = tools.parse_data_msg(self.get_response(17)).data
         bits = f'{int(response, 16):0>16b}'
         bits = bits[:8] + bits[9:12]
         return Status(*map(lambda x: x == "1", bits))
@@ -201,16 +258,30 @@ class Meter:
     @property
     def serial_number(self) -> str:
         """Returns serial number of the meter."""
-        if self.__serial_num:
-            return self.__serial_num
-        self.send_request(tools.Commands.serial_num)
-        self.__serial_num = tools.parse_response(self.get_response(21))
+        if not self.__serial_num:
+            self.send_request(tools.Commands.serial_num)
+            self.__serial_num = tools.parse_data_msg(self.get_response(21)).data
         return self.__serial_num
 
     @property
-    def device_name(self) -> str:
-        """Returns device name obtained at initialization."""
+    def name(self) -> str:
+        """Returns meter name obtained at initialization."""
         return self.__device_name
+
+    @property
+    def address(self) -> str:
+        """Returns network address of the meter (may be the same as the meter name)."""
+        if self.__address:
+            return self.__address
+        self.send_request(tools.Commands.address)
+        self.__address = tools.parse_data_msg(self.get_response(21)).data
+        return self.__address
+
+    @property
+    def temperature(self) -> int:
+        """Returns meter temperature."""
+        self.send_request(tools.Commands.temperature)
+        return int(tools.parse_data_msg(self.get_response(16)).data)
 
     def send_request(self, request: bytes):
         """Sends sequence of bytes to meter."""
@@ -224,32 +295,35 @@ class Meter:
         If expected == None and size == None and session by RFC2217 protocol
         read all before timeout.
         """
-        if self.__is_rfc2217 and not size:
+        if (self.__is_rfc2217 or not expected) and not size:
             return self.__session.readall()
         elif size:
             return self.__session.read(size)
         elif expected:
             resp = self.__session.read_until(expected)
+            if expected == b"\x03":
+                try:
+                    resp += expected
+                    resp += tools.calculate_bcc(resp[1:])
+                except IndexError:
+                    raise ValueError(f"invalid response format, response: {resp}") from None
             self.__session.flushInput()
             return resp
-        elif not size and not expected:
-            return self.__session.readall()
 
-    def close_session(self):
-        """Closes serial session and clears resources."""
+    def __del__(self):
         if self.__session.is_open:
-            self.send_request(tools.Commands.end_conn)
+            self.send_request(b"\x01B0\x03q")
             self.__session.flush()
             self.__session.__del__()
 
     def __str__(self) -> str:
-        return self.device_name
+        return f"{self.name} : {self.address}"
 
     def __repr__(self) -> str:
-        return f"Meter({self.__device!r})"
+        return f"Meter({self.__device!r}, {self.address!r})"
 
     def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
-        self.close_session()
+        self.__del__()

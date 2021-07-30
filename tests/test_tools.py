@@ -1,5 +1,5 @@
 import unittest
-from pyneva.tools import make_request, parse_response, calculate_bcc
+from pyneva.tools import make_request, parse_response, calculate_bcc, get_resp_data
 
 
 class TestTools(unittest.TestCase):
@@ -25,12 +25,12 @@ class TestTools(unittest.TestCase):
         self.assertRaises(ValueError, make_request, obis="60.01.00*FF", mode="P")
         self.assertRaises(ValueError, make_request, obis="600100FF")
 
-    def test_parse_response(self):
+    def test_get_resp_data(self):
         first = (
-            parse_response(b"\x02600100FF(60089784)\x03\x09"),
-            parse_response(b"\x024C0700FF(00134.2)\x03X"),
-            parse_response(b"\x020F0680FF(04.8190,04.8457,02.5359,00.0000,00.0000)\x03R"),
-            parse_response(
+            get_resp_data(b"\x02600100FF(60089784)\x03\x09"),
+            get_resp_data(b"\x024C0700FF(00134.2)\x03X"),
+            get_resp_data(b"\x020F0680FF(04.8190,04.8457,02.5359,00.0000,00.0000)\x03R"),
+            get_resp_data(
                 b"\x020A0164FF(070001,230002,000000,000000,000000,000000,000000,000000)\x03Y"),
         )
         second = (
@@ -41,9 +41,12 @@ class TestTools(unittest.TestCase):
         )
         self.assertEqual(first, second)
 
-        self.assertRaises(TypeError, parse_response, response=123)
-        self.assertRaises(ValueError, parse_response, response=b"")
-        self.assertRaises(ValueError, parse_response, response=b"\x024C0700FF00134.2\x03X")
+        self.assertRaises(TypeError, get_resp_data, response=123)
+        self.assertRaises(ValueError, get_resp_data, response=b"")
+        self.assertRaises(ValueError, get_resp_data, response=b"\x024C0700FF00134.2\x03X")
+        self.assertRaises(ValueError, get_resp_data, response=b"\x020F0880FF(016442.17,"
+                                                              b"012865.25,003576.92,000000.00,"
+                                                              b"000000.00)\x03S")  # Invalid BCC
 
     def test_calculate_bcc(self):
         first = (

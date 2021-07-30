@@ -1,4 +1,28 @@
-from typing import NamedTuple
+from typing import NamedTuple, Union
+
+
+# @dataclass
+# class Response:
+#     data: Union[str, float, tuple[Union[str, float], ...]]
+#     command: str = ""
+#     obis: str = ""
+
+
+class DataMsg(NamedTuple):
+    data: Union[str, float, tuple[Union[str, float], ...]]
+    address: str
+
+
+class IdentificationMsg(NamedTuple):
+    id: str
+    baudrate_num: int
+    vendor: str
+
+
+class CommandMsg(NamedTuple):
+    data: bytes
+    command: str
+    address: str = ""
 
 
 class Status(NamedTuple):

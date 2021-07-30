@@ -1,6 +1,6 @@
 ## Library for electricity meters Neva MT 3xx
 
-Working via serial port or RFC2217 server configured in telnet mode with remctl option,
+Working via serial port or ser2net server configured in RFC2217 mode (telnet, remctl option),
 using protocol IEC 61107 (currently IEC 62056-21) and OBIS codes.
 
 ## Installation
@@ -32,7 +32,7 @@ from pyneva import Meter
 
 # /dev/ttyX for linux local port
 # comX or COMX for Windows local port
-with Meter("192.168.88.109:1884") as session:
+with Meter("rfc2217://192.168.88.109:1884") as session:
     print(session.device_name)
     # NEVAMT324.1106
 

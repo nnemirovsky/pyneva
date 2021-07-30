@@ -28,8 +28,8 @@ try:
         if len(args.obis) != 0:
             print("\nOBIS:")
             for code in args.obis:
-                meter.send_request(tools.make_request(code))
-                print(f"{code}\t", tools.parse_response(meter.get_response()))
+                meter.send_request(tools.make_cmd_msg(code))
+                print(f"{code}\t", tools.parse_data_msg(meter.get_response()).data)
 
         if len(args.func) != 0:
             print("\nFunctions:")

@@ -5,7 +5,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="pyneva",
-    version="0.7.1",
+    version="0.7.2",
     description="Custom library for electricity meters Neva MT 3xx",
     long_description=long_description,
     long_description_content_type="text/markdown",
