@@ -1,11 +1,20 @@
 from setuptools import find_packages, setup
+import os
 
 with open("README.md", "r", encoding="utf-8") as fh:
     long_description = fh.read()
 
+here = os.path.abspath(os.path.dirname(__file__))
+init_path = os.path.join(here, 'pyneva', '__init__.py')
+with open(init_path, 'r', encoding='utf-8') as f:
+    for line in f.read().splitlines():
+        if line.startswith('__version__'):
+            delim = '"' if '"' in line else "'"
+            __version__ = line.split(delim)[1]
+
 setup(
     name="pyneva",
-    version="0.7.2",
+    version=__version__,
     description="Custom library for electricity meters Neva MT 3xx",
     long_description=long_description,
     long_description_content_type="text/markdown",

@@ -1,11 +1,5 @@
+from dataclasses import dataclass
 from typing import NamedTuple, Union
-
-
-# @dataclass
-# class Response:
-#     data: Union[str, float, tuple[Union[str, float], ...]]
-#     command: str = ""
-#     obis: str = ""
 
 
 class DataMsg(NamedTuple):
@@ -14,7 +8,7 @@ class DataMsg(NamedTuple):
 
 
 class IdentificationMsg(NamedTuple):
-    id: str
+    ident: str
     baudrate_num: int
     vendor: str
 
@@ -82,3 +76,45 @@ class TariffSchedulePart(NamedTuple):
 
 class TariffSchedule(NamedTuple):
     parts: tuple[TariffSchedulePart, ...]
+
+
+@dataclass(eq=False, frozen=True, unsafe_hash=True)
+class OBISCodes:
+    total_energy: str
+    serial_num: str
+    status: str
+    seasonal_schedules: str
+    special_days_schedules: str
+    tariff_schedule_obis: str
+    date: str
+    address: str
+    voltage: str = ""
+    voltage_A: str = ""
+    voltage_B: str = ""
+    voltage_C: str = ""
+    active_power: str = ""
+    active_power_A: str = ""
+    active_power_B: str = ""
+    active_power_C: str = ""
+    active_power_sum: str = ""
+    temperature: str = ""
+
+
+class MeterException(Exception):
+    """Base class for meter exceptions."""
+
+
+class MeterConnectionError(MeterException):
+    """Raise if error occurs while connection initialization."""
+
+
+class ResponseError(MeterException):
+    """Base exception for incorrect responses."""
+
+
+class WrongBCC(ResponseError):
+    """Raise when the BCC is incorrect in a response message."""
+
+
+class ErrorMessageReceived(MeterException):
+    """Raise when an error message is received."""

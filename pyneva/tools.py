@@ -1,8 +1,8 @@
 import re
-from dataclasses import dataclass
 from re import Match
 from typing import Literal
-from .types import IdentificationMsg, DataMsg
+
+from .types import IdentificationMsg, DataMsg, ErrorMessageReceived, WrongBCC, ResponseError
 
 
 def make_cmd_msg(obis: str = "", mode: Literal["P", "W", "R"] = "R", data: bytes = b"") -> bytes:
@@ -13,85 +13,48 @@ def make_cmd_msg(obis: str = "", mode: Literal["P", "W", "R"] = "R", data: bytes
     if type(obis) != str:
         raise TypeError(f"OBIS must be str, not {type(obis).__name__}")
 
+    if type(data) != bytes:
+        raise TypeError(f"data must be bytes, not {type(data).__name__}")
+
     if mode not in ("P", "W", "R"):
-        raise ValueError(f"mode must be in ('P', 'W', 'R'), not '{mode}'")
+        raise ValueError(f"mode must be in ('P', 'W', 'R'), not {mode!r}")
 
     if mode in ("P", "W") and not data:
         raise ValueError("data cannot be empty if mode in ('P', 'W')")
 
-    if type(data) != bytes:
-        raise TypeError(f"data type must be bytes, not {type(data).__name__}")
-
-    if not obis and mode == "W":
+    if not obis and mode in ("R", "W"):
         raise ValueError("if mode == 'W' OBIS code must be specified")
 
     if obis and mode == "P":
         raise ValueError("mode cannot be 'P' if OBIS code was specified")
 
     if obis:
-        pattern = re.compile(r"[A-F0-9]{2}\.[A-F0-9]{2}\.[A-F0-9]{2}\*FF")
-        if not bool(pattern.fullmatch(obis)):
+        pattern = r"({a})\.({a})\.({a})\*({a})".format(a="[A-F0-9]{2}")
+        pattern = re.compile(pattern)
+        obis = pattern.fullmatch(obis)
+        if not obis:
             raise ValueError("OBIS code format is wrong")
-        obis = obis[:2] + obis[3:5] + obis[6:8] + obis[9:]
+        obis = obis[1] + obis[2] + obis[3] + obis[4]
 
-    obis = obis.encode()
-    data = b"(%s)" % data
-    request = b"\x01" + mode.encode() + b"1\x02" + obis + data + b"\x03"
-    request += calculate_bcc(request[1:])
-    return request
+    msg = b"\x01%s1\x02%s(%s)\x03" % (mode.encode(), obis.encode(), data)
+    msg += calculate_bcc(msg[1:])
+    return msg
 
-
-# def parse_response(response: bytes) -> Union[str, float, tuple[Union[str, float], ...]]:
-#     """
-#     Parsing bytes response.
-#     Returns str or float, or tuple with str or float, depending on the response type.
-#     """
-#     if not isinstance(response, bytes):
-#         raise TypeError(f"response must be bytes, not {type(response).__name__}")
-#     try:
-#         response = response[response.index(b"(") + 1:response.index(b")")]
-#     except (IndexError, ValueError):
-#         raise ValueError(f"invalid response format, response: {response}") from None
-#
-#     response = response.split(b",")
-#     if b"." in response[0]:
-#         if len(response) != 1:
-#             return tuple(map(float, response))
-#         return float(response[0])
-#     if len(response) != 1:
-#         return tuple(map(lambda x: x.decode("ascii"), response))
-#     return response[0].decode("ascii")
 
 def parse_id_msg(response: bytes) -> IdentificationMsg:
     if not isinstance(response, bytes):
         raise TypeError(f"response must be bytes, not {type(response).__name__}")
-    pattern = b"^\\/(?P<vendor>([A-Z]{3}|[A-Z]{2}[a-z]))(?P<baudrate>[0-5])(?P<id>" \
+    pattern = b"^\\/(?P<vendor>[A-Z]{2}([A-Z]|[a-z]))(?P<baudrate>[0-5])(?P<ident>" \
               b"[\x22-\x2E\x30-\x7E]{1,16})\r\n$"
     pattern = re.compile(pattern)
     id_msg = pattern.fullmatch(response)
     if not id_msg:
-        raise ValueError(f"invalid identification message format, msg: {response}")
-    identity = id_msg.group("id").decode("ascii")
+        raise ResponseError(f"invalid identification message format, msg: {response}")
+    identity = id_msg.group("ident").decode("ascii")
     vendor = id_msg.group("vendor").decode("ascii")
     baudrate_num = int(id_msg.group("baudrate"))
-    return IdentificationMsg(id=identity, vendor=vendor, baudrate_num=baudrate_num)
+    return IdentificationMsg(ident=identity, vendor=vendor, baudrate_num=baudrate_num)
 
-
-# def parse_cmd_msg(response: bytes) -> CommandMsg:
-#     if not isinstance(response, bytes):
-#         raise TypeError(f"response must be bytes, not {type(response).__name__}")
-#     pattern = b"^\x01(?P<cmd>(P0|P1|P2|W1|R1|B0|B1))\x02(?P<addr>[0-9A-F]{8})?" \
-#               b"\\((?P<data>.*)\\)\x03(?P<bcc>[\x00-\xff])$"
-#     pattern = re.compile(pattern)
-#     cmd_msg = pattern.fullmatch(response)
-#     if not cmd_msg:
-#         raise ValueError(f"invalid command message format, msg: {response}")
-#     address = ""
-#     if b"P" not in cmd_msg.group("cmd"):
-#         address = cmd_msg.group("addr").decode("ascii")
-#     command = cmd_msg.group("cmd").decode("ascii")
-#     data = cmd_msg.group("data")
-#     return CommandMsg(data=data, command=command, address=address)
 
 def parse_password_msg(response: bytes) -> bytes:
     if not isinstance(response, bytes):
@@ -100,31 +63,28 @@ def parse_password_msg(response: bytes) -> bytes:
     pattern = re.compile(pattern)
     pass_msg = pattern.fullmatch(response)
     if not pass_msg:
-        raise ValueError(f"invalid password message format, msg: {response}")
-    # calc_bcc = calculate_bcc(pass_msg[0][1:-1])
-    # if calc_bcc != pass_msg["bcc"]:
-    #     raise ValueError(f"wrong BCC, must be {calc_bcc} received {pass_msg['bcc']}")
+        raise ResponseError(f"invalid password message format, msg: {response}")
     check_bcc(pass_msg)
     return pass_msg.group("data")
 
 
-def check_bcc(msg: Match[bytes]):
-    calc_bcc = calculate_bcc(msg[0][1:-1])
-    if calc_bcc != msg["bcc"]:
-        raise ValueError(f"wrong BCC, must be {calc_bcc} received {msg['bcc']}")
+def check_err(response: bytes):
+    pattern = b"^\x02\\((?P<err>[0-9]+)\\)\x03[\x00-\xff]$"
+    pattern = re.compile(pattern)
+    response = pattern.fullmatch(response)
+    if response:
+        raise ErrorMessageReceived(f"error code: {response['err'].decode('ascii')}")
 
 
 def parse_data_msg(response: bytes) -> DataMsg:
     if not isinstance(response, bytes):
         raise TypeError(f"response must be bytes, not {type(response).__name__}")
-    pattern = b"^\x02(?P<addr>[0-9A-F]{8})?\\((?P<data>.*)\\)\x03(?P<bcc>[\x00-\xff])$"
+    pattern = b"^\x02(?P<addr>[0-9A-F]{8})\\((?P<data>.*)\\)\x03(?P<bcc>[\x00-\xff])$"
     pattern = re.compile(pattern)
     data_msg = pattern.fullmatch(response)
     if not data_msg:
-        raise ValueError(f"invalid command message format, msg: {response}")
-    # calc_bcc = calculate_bcc(data_msg[0][1:-1])
-    # if calc_bcc != data_msg["bcc"]:
-    #     raise ValueError(f"wrong BCC, must be {calc_bcc} received {data_msg['bcc']}")
+        check_err(response)
+        raise ResponseError(f"invalid data message format, msg: {response}")
     check_bcc(data_msg)
     data = data_msg["data"].split(b",")
     if b"." in data[0]:
@@ -137,62 +97,23 @@ def parse_data_msg(response: bytes) -> DataMsg:
     else:
         data = data[0].decode("ascii")
     address = data_msg["addr"].decode("ascii")
-    address = address[:2] + "." + address[2:4] + "." + address[4:6] + "*" + address[6:]
+    address = f"{address[:2]}.{address[2:4]}.{address[4:6]}*{address[6:]}"
     return DataMsg(data=data, address=address)
 
 
-# def parse_response(response: bytes) -> Response:
-#     """
-#     Parsing bytes response.
-#     Returns str or float, or tuple with str or float, depending on the response type.
-#     """
-#     if not isinstance(response, bytes):
-#         raise TypeError(f"response must be bytes, not {type(response).__name__}")
-#
-#     pattern = b"^(\x02(?P<obis>[0-9A-F]{8})|\x01(?P<command>P0)\x02)\\((?P<data>.*)\\)" \
-#               b"\x03(?P<bcc>[\x00-\xFF])$"
-#     pattern = re.compile(pattern)
-#     resp_parsed = pattern.fullmatch(response)
-#     if not resp_parsed:
-#         raise ValueError(f"invalid response format, response: {response}")
-#     calc_bcc = calculate_bcc(resp_parsed[0][1:-1])
-#     if calc_bcc != resp_parsed["bcc"]:
-#         raise ValueError(f"wrong BCC, must be {calc_bcc} received {resp_parsed['bcc']}")
-#
-#     data = resp_parsed["data"].split(b",")
-#     if b"." in data[0]:
-#         if len(data) != 1:
-#             data = tuple(map(float, data))
-#         else:
-#             data = float(data[0])
-#     elif len(data) != 1:
-#         data = tuple(map(lambda x: x.decode("ascii"), data))
-#     else:
-#         data = data[0].decode("ascii")
-#
-#     if resp_parsed["obis"]:
-#         params = {"obis": resp_parsed["obis"].decode("ascii")}
-#     else:
-#         params = {"command": resp_parsed["command"].decode("ascii")}
-#     return Response(data=data, **params)
-
-
-# def get_resp_data(response: bytes) -> Union[str, float, tuple[Union[str, float], ...]]:
-#     return parse_response(response).data
-
-
-def parse_schedules(schedules: tuple) -> tuple[tuple[int, ...], ...]:
+def parse_schedules(schedules: tuple[str, ...]) -> tuple[tuple[int, ...], ...]:
     schedules_parsed = []
     for skd in schedules:
-        if not int(skd):
-            continue
-        skd = tuple(int(skd[i:i + 2]) for i in range(0, len(skd), 2))
-        schedules_parsed.append(skd)
+        if int(skd):
+            schedules_parsed.append(tuple(int(skd[i:i + 2]) for i in range(0, len(skd), 2)))
     return tuple(schedules_parsed)
 
 
-# def split_by2(string: str) -> tuple[str, ...]:
-#     return tuple(string[i:i + 2] for i in range(0, len(string), 2))
+def check_bcc(msg: Match[bytes]):
+    """Check that BCC from the response message is correct."""
+    calc_bcc = calculate_bcc(msg[0][1:-1])
+    if calc_bcc != msg["bcc"]:
+        raise WrongBCC(f"BCC must be {calc_bcc}, but received {msg['bcc']}")
 
 
 def calculate_bcc(data: bytes) -> bytes:
@@ -203,23 +124,3 @@ def calculate_bcc(data: bytes) -> bytes:
     for byte in data:
         bcc ^= byte
     return bcc.to_bytes(1, "little")
-
-
-@dataclass
-class Commands:
-    total_energy = make_cmd_msg("0F.08.80*FF")
-    voltage_A = make_cmd_msg("20.07.00*FF")
-    voltage_B = make_cmd_msg("34.07.00*FF")
-    voltage_C = make_cmd_msg("48.07.00*FF")
-    active_power_A = make_cmd_msg("24.07.00*FF")
-    active_power_B = make_cmd_msg("38.07.00*FF")
-    active_power_C = make_cmd_msg("4C.07.00*FF")
-    active_power_sum = make_cmd_msg("10.07.00*FF")
-    serial_num = make_cmd_msg("60.01.00*FF")
-    status = make_cmd_msg("60.05.00*FF")
-    seasonal_schedules = make_cmd_msg("0D.00.00*FF")
-    special_days_schedules = make_cmd_msg("0B.00.00*FF")
-    tariff_schedule_obis = "0A.%s.64*FF"
-    date = make_cmd_msg("00.09.02*FF")
-    address = make_cmd_msg("60.01.01*FF")
-    temperature = make_cmd_msg("60.09.00*FF")
