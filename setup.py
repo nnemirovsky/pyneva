@@ -15,7 +15,7 @@ with open(init_path, 'r', encoding='utf-8') as f:
 setup(
     name="pyneva",
     version=__version__,
-    description="Custom library for electricity meters Neva MT 3xx",
+    description="Custom library for electricity meters Neva MT",
     long_description=long_description,
     long_description_content_type="text/markdown",
     author="Nikita Nemirovsky",
