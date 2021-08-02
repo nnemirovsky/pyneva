@@ -1,14 +1,14 @@
 from dataclasses import dataclass
-from typing import NamedTuple, Union
+from typing import NamedTuple
 
 
 class DataMsg(NamedTuple):
-    data: Union[str, float, tuple[Union[str, float], ...]]
+    data: tuple[str, ...]
     address: str
 
 
 class IdentificationMsg(NamedTuple):
-    ident: str
+    identifier: str
     baudrate_num: int
     vendor: str
 
@@ -19,21 +19,7 @@ class CommandMsg(NamedTuple):
     address: str = ""
 
 
-class Status(NamedTuple):
-    data_memory_err: bool
-    param_memory_err: bool
-    measurement_err: bool
-    clock_err: bool
-    battery_discharged: bool
-    programming_button_pressed: bool
-    data_memory_doesnt_work: bool
-    param_memory_doesnt_work: bool
-    screw_terminal_cover_removed: bool
-    load_connected: bool
-    load_disconnected: bool
-
-
-class TotalEnergy(NamedTuple):
+class ActiveEnergy(NamedTuple):
     total: float
     T1: float
     T2: float
@@ -42,16 +28,39 @@ class TotalEnergy(NamedTuple):
 
 
 class Voltage(NamedTuple):
-    phaseA: float
-    phaseB: float
-    phaseC: float
+    l1: float
+    l2: float
+    l3: float
+
+
+class Current(NamedTuple):
+    l1: float
+    l2: float
+    l3: float
+
+
+class PowerFactor(NamedTuple):
+    l1: str
+    l2: str
+    l3: str
 
 
 class ActivePower(NamedTuple):
-    sum: float
-    phaseA: float
-    phaseB: float
-    phaseC: float
+    l1: float
+    l2: float
+    l3: float
+    total: float
+
+
+class ReactivePower(NamedTuple):
+    positive_l1: float
+    negative_l1: float
+    positive_l2: float
+    negative_l2: float
+    positive_l3: float
+    negative_l3: float
+    total_positive: float
+    total_negative: float
 
 
 class SeasonalSchedule(NamedTuple):
@@ -78,26 +87,44 @@ class TariffSchedule(NamedTuple):
     parts: tuple[TariffSchedulePart, ...]
 
 
-@dataclass(eq=False, frozen=True, unsafe_hash=True)
+@dataclass
 class OBISCodes:
-    total_energy: str
     serial_num: str
-    status: str
+    firmware_id: str
     seasonal_schedules: str
     special_days_schedules: str
-    tariff_schedule_obis: str
+    tariff_schedule: str
     date: str
+    time: str
+    datetime: str
     address: str
-    voltage: str = ""
-    voltage_A: str = ""
-    voltage_B: str = ""
-    voltage_C: str = ""
-    active_power: str = ""
-    active_power_A: str = ""
-    active_power_B: str = ""
-    active_power_C: str = ""
-    active_power_sum: str = ""
+    frequency: str
+    active_energy: str = ""
+    active_energy_prev_month: str = ""
+    active_energy_prev_day: str = ""
+    status: str = ""
     temperature: str = ""
+    voltage_l1: str = ""
+    voltage_l2: str = ""
+    voltage_l3: str = ""
+    current_l1: str = ""
+    current_l2: str = ""
+    current_l3: str = ""
+    power_factor_l1: str = ""
+    power_factor_l2: str = ""
+    power_factor_l3: str = ""
+    active_power_l1: str = ""
+    active_power_l2: str = ""
+    active_power_l3: str = ""
+    active_power_sum: str = ""
+    positive_reactive_power_l1: str = ""
+    negative_reactive_power_l1: str = ""
+    positive_reactive_power_l2: str = ""
+    negative_reactive_power_l2: str = ""
+    positive_reactive_power_l3: str = ""
+    negative_reactive_power_l3: str = ""
+    positive_reactive_power_sum: str = ""
+    negative_reactive_power_sum: str = ""
 
 
 class MeterException(Exception):
@@ -109,12 +136,11 @@ class MeterConnectionError(MeterException):
 
 
 class ResponseError(MeterException):
-    """Base exception for incorrect responses."""
+    """Base exception for incorrect/error responses."""
 
 
 class WrongBCC(ResponseError):
     """Raise when the BCC is incorrect in a response message."""
 
-
-class ErrorMessageReceived(MeterException):
-    """Raise when an error message is received."""
+# class ErrorMessageReceived(MeterException):
+#     """Raise when an error message is received."""

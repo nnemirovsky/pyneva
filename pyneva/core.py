@@ -6,96 +6,87 @@ from serial.rfc2217 import Serial as rfc2217Serial
 
 from . import tools
 from .types import OBISCodes, ResponseError, MeterConnectionError, SeasonalSchedule, \
-    SpecialDaysSchedule, TariffSchedule, TariffSchedulePart, Status, TotalEnergy, Voltage, \
-    ActivePower
+    SpecialDaysSchedule, TariffSchedule, TariffSchedulePart, ActiveEnergy
 
 
 class MeterBase:
-    """Base class for working with electricity meters Neva.
+    """Base class for working with electricity meters Neva MT.
     Implements basic methods, excluding those that depend on the meter type.
     """
 
     __baudrates = (300, 600, 1200, 2400, 4800, 9600)
-    __init_baudrate = __baudrates[0]
     __timeout = 3
     __serial_num = None
+    __device_identifier = None
     __used_tariff_schedules = set()
-    OBISCodes = OBISCodes(total_energy="", serial_num="", status="", seasonal_schedules="",
-                          special_days_schedules="", tariff_schedule_obis="", date="", address="")
+    obis_codes = OBISCodes(serial_num="60.01.00*FF", date="00.09.02*FF", time="00.09.01*FF",
+                           address="60.01.01*FF", status="60.05.00*FF", temperature="60.09.00*FF",
+                           seasonal_schedules="0D.00.00*FF", special_days_schedules="0B.00.00*FF",
+                           tariff_schedule="0A.%s.64*FF", firmware_id="60.01.04*FF",
+                           frequency="0E.07.01*FF", datetime="00.09.80*FF",
+                           active_energy="0F.08.80*FF", active_energy_prev_month="0F.08.80*00",
+                           active_energy_prev_day="0F.80.80*00")
 
-    def __init__(self, interface: str, address: str = "", password: str = ""):
+    def __init__(self, interface: str, address: str = "", password: str = "",
+                 initial_baudrate: int = 0):
+        if initial_baudrate == 0:
+            initial_baudrate = self.__baudrates[0]
         self.__interface = interface
         self.__address = address
         self.__password = password.encode("ascii")
-        self.__session = serial.serial_for_url(self.__interface, baudrate=self.__init_baudrate,
+        self.__init_baudrate = initial_baudrate
+        self.__session = serial.serial_for_url(self.__interface, do_not_open=True,
+                                               baudrate=self.__init_baudrate,
                                                bytesize=serial.SEVENBITS,
                                                parity=serial.PARITY_EVEN,
                                                stopbits=serial.STOPBITS_ONE,
                                                timeout=self.__timeout)
         self.__is_rfc2217 = isinstance(self.__session, rfc2217Serial)
-        self.__start_session()
 
-    def __start_session(self):
-        """Starting serial session by protocol 61107 in programming mode."""
+    def start_session(self):
+        """Starting serial session according to protocol 61107 in programming mode."""
+        self.__session.open()
+
         # Send request message
         self.send(b"/?%s!\r\n" % self.__address.encode("ascii"))
 
-        # Read identification message
-        try:
-            msg = tools.parse_id_msg(self.recv(21))
-            self.__working_baudrate = self.__baudrates[msg.baudrate_num]
-            self.__device_model = msg.ident
-        except ResponseError as e:
-            self.__session.__del__()
-            raise MeterConnectionError(e) from None
+        working_baudrate_num = self.__read_id_msg()
 
         # Send acknowledgement message, programming mode
-        self.send(b"\x060%i1\r\n" % msg.baudrate_num)
+        self.send(b"\x060%i1\r\n" % working_baudrate_num)
 
-        # Changing baudrate
+        # Change baudrate
         sleep(.3)
-        self.__session.baudrate = self.__working_baudrate
+        self.__session.baudrate = self.__baudrates[working_baudrate_num]
 
-        # Read password message
-        try:
-            resp_size = 15 if self.__is_rfc2217 else 16
-            resp = self.recv(resp_size)
-            resp = (b"\x01" + resp) if self.__is_rfc2217 else resp
-            if not self.__password:
-                self.__password = tools.parse_password_msg(resp)
-        except ResponseError as e:
-            self.__session.__del__()
-            raise MeterConnectionError(e)
+        self.__read_password_msg()
 
-        # Send password comparison command message
+        # Send password comparison message
         self.send(tools.make_cmd_msg(mode="P", data=self.__password))
 
-        # Read confirmation message
-        if msg := self.recv(1) != b"\x06":
-            self.__session.__del__()
-            raise MeterConnectionError(f"message is not ACK, message: {msg}")
+        self.__read_ack_msg()
 
     @property
     def seasonal_schedules(self) -> tuple[SeasonalSchedule, ...]:
-        """
-        Returns tuple with seasonal schedules.
+        """Returns tuple with seasonal schedules.
         Each schedule specifies from which date the tariff starts,
         and the numbers of tariff schedules on weekdays, Saturdays, Sundays separately.
         """
-        self.send(tools.make_cmd_msg(self.OBISCodes.seasonal_schedules))
-        seasons = tools.parse_data_msg(self.recv(144)).data
-        seasons = tuple(map(lambda skd: SeasonalSchedule(*skd), tools.parse_schedules(seasons)))
-        for season in seasons:
-            self.__used_tariff_schedules.update(season[2:])
-        return seasons
+        self.send(tools.make_cmd_msg(self.obis_codes.seasonal_schedules))
+        schedules = tools.parse_data_msg(self.recv(144)).data
+        schedules = tuple(
+            map(lambda skd: SeasonalSchedule(*skd), tools.parse_schedules(schedules))
+        )
+        for schedule in schedules:
+            self.__used_tariff_schedules.update(schedule[2:])
+        return schedules
 
     @property
     def special_days_schedules(self) -> tuple[SpecialDaysSchedule, ...]:
-        """
-        Returns tuple with special days schedules.
+        """Returns tuple with special days schedules.
         Each schedule includes date and tariff schedule number.
         """
-        self.send(tools.make_cmd_msg(self.OBISCodes.special_days_schedules))
+        self.send(tools.make_cmd_msg(self.obis_codes.special_days_schedules))
         days = tools.parse_data_msg(self.recv(236)).data
         days = tuple(map(lambda skd: SpecialDaysSchedule(*skd), tools.parse_schedules(days)))
         self.__used_tariff_schedules.update(map(lambda x: x.skd_num, days))
@@ -103,82 +94,161 @@ class MeterBase:
 
     @property
     def tariff_schedules(self) -> tuple[TariffSchedule, ...]:
-        """
-        Returns tuple with tariff schedules.
+        """Returns tuple with tariff schedules.
         Each tariff schedule contains parts of the schedule.
         Each schedule part describes from what time of day the tariff starts,
         and tariff number.
         """
-        tariff_schedules = []
         if not self.__used_tariff_schedules:
             self.__used_tariff_schedules.add(1)
+        tariff_schedules = []
         for schedule_num in self.__used_tariff_schedules:
-            current_skd_obis = self.OBISCodes.tariff_schedule_obis % f"{schedule_num:02X}"
-            self.send(tools.make_cmd_msg(current_skd_obis))
-            resp = self.recv(68)
-            schedule_part = tools.parse_data_msg(resp).data
-            schedule_part = tuple(
-                map(lambda skd: TariffSchedulePart(*skd), tools.parse_schedules(schedule_part))
-            )
-            if schedule_part:
-                tariff_schedules.append(TariffSchedule(schedule_part))
+            schedule_obis = self.obis_codes.tariff_schedule % f"{schedule_num:02X}"
+            self.send(tools.make_cmd_msg(schedule_obis))
+            schedule = tools.parse_schedules(tools.parse_data_msg(self.recv(68)).data)
+            schedule = tuple(map(lambda skd: TariffSchedulePart(*skd), schedule))
+            if schedule:
+                tariff_schedules.append(TariffSchedule(schedule))
         return tuple(tariff_schedules)
 
     @property
-    def date(self) -> datetime.date:
-        """Returns current date from the meter."""
-        self.send(tools.make_cmd_msg(self.OBISCodes.date))
-        date = tools.parse_data_msg(self.recv(19)).data
-        return datetime.strptime(date, "%y%m%d").date()
+    def active_energy(self) -> ActiveEnergy:
+        """Cumulative active energy from the first start of measurement
+        to the present (Total, T1, ..., T4) [kWh].
+        """
+        self.send(tools.make_cmd_msg(self.obis_codes.active_energy))
+        return ActiveEnergy(*map(float, tools.parse_data_msg(self.recv(62)).data))
 
     @property
-    def status(self) -> Status:
-        """Returns status of meter errors."""
-        self.send(tools.make_cmd_msg(self.OBISCodes.status))
-        response = tools.parse_data_msg(self.recv(17)).data
-        bits = f'{int(response, 16):0>16b}'
-        bits = bits[:8] + bits[9:12]
-        return Status(*map(lambda x: x == "1", bits))
+    def __active_energy_prev_month(self) -> ActiveEnergy:
+        """Cumulative active energy from the first start of measurement
+        to the beginning of this month (Total, T1, ..., T4) [kWh].
+        """
+        self.send(tools.make_cmd_msg(self.obis_codes.active_energy_prev_month))
+        return ActiveEnergy(*map(float, tools.parse_data_msg(self.recv(62)).data))
+
+    @property
+    def active_energy_last_month(self) -> ActiveEnergy:
+        """Cumulative active energy for this month (Total, T1, ..., T4) [kWh]."""
+        return ActiveEnergy(
+            *map(lambda x: round(x[0] - x[1], 2),
+                 zip(self.active_energy, self.__active_energy_prev_month))
+        )
+
+    @property
+    def __active_energy_prev_day(self) -> ActiveEnergy:
+        """Cumulative active energy from the first start of measurement
+        to the beginning of this day (Total, T1, ..., T4) [kWh].
+        """
+        self.send(tools.make_cmd_msg(self.obis_codes.active_energy_prev_day))
+        return ActiveEnergy(*map(float, tools.parse_data_msg(self.recv(62)).data))
+
+    @property
+    def active_energy_last_day(self) -> ActiveEnergy:
+        """Cumulative active energy for this day (Total, T1, ..., T4) [kWh]."""
+        return ActiveEnergy(
+            *map(lambda x: round(x[0] - x[1], 2),
+                 zip(self.active_energy, self.__active_energy_prev_day))
+        )
+
+    @property
+    def frequency(self) -> float:
+        """Supply frequency [Hz]."""
+        self.send(tools.make_cmd_msg(self.obis_codes.frequency))
+        return float(tools.parse_data_msg(self.recv(18)).data[0])
+
+    @property
+    def date(self) -> datetime.date:
+        """Current date on the meter."""
+        self.send(tools.make_cmd_msg(self.obis_codes.date))
+        date_str = tools.parse_data_msg(self.recv(19)).data[0]
+        return datetime.strptime(date_str, "%y%m%d").date()
+
+    @property
+    def time(self) -> datetime.time:
+        """Current time on the meter."""
+        self.send(tools.make_cmd_msg(self.obis_codes.time))
+        time_str = tools.parse_data_msg(self.recv(19)).data[0]
+        return datetime.strptime(time_str, "%H%M%S").time()
+
+    @property
+    def datetime(self) -> datetime:
+        """Current date and time on the meter."""
+        self.send(tools.make_cmd_msg(self.obis_codes.datetime))
+        datetime_str = tools.parse_data_msg(self.recv(25)).data[0]
+        return datetime.strptime(datetime_str, "%y%m%d%H%M%S")
 
     @property
     def serial_number(self) -> str:
-        """Returns serial number of the meter."""
+        """Serial number of the meter."""
         if not self.__serial_num:
-            self.send(tools.make_cmd_msg(self.OBISCodes.serial_num))
-            self.__serial_num = tools.parse_data_msg(self.recv(21)).data
+            self.send(tools.make_cmd_msg(self.obis_codes.serial_num))
+            self.__serial_num = tools.parse_data_msg(self.recv(21)).data[0]
         return self.__serial_num
 
     @property
+    def identifier(self) -> str:
+        """Meter identifier obtained at initialization."""
+        return self.__device_identifier
+
+    @property
     def model(self) -> str:
-        """Returns meter name obtained at initialization."""
-        return self.__device_model
+        """Meter model obtained from the identifier."""
+        return tools.id_to_model.get(self.identifier[6:12], "unknown identifier")
+
+    @property
+    def version(self) -> str:
+        """Meter version of model."""
+        return self.identifier[12:]
 
     @property
     def address(self) -> str:
-        """Returns network address of the meter (may be the same as the meter model)."""
+        """Address of the meter (may be the same as the serial number)."""
         if self.__address:
             return self.__address
-        self.send(tools.make_cmd_msg(self.OBISCodes.address))
-        self.__address = tools.parse_data_msg(self.recv(21)).data
+        self.send(tools.make_cmd_msg(self.obis_codes.address))
+        self.__address = tools.parse_data_msg(self.recv(21)).data[0]
         return self.__address
 
     @property
+    def firmware(self) -> str:
+        """Meter firmware identifier."""
+        self.send(tools.make_cmd_msg(self.obis_codes.firmware_id))
+        return tools.parse_data_msg(self.recv(21)).data[0]
+
+    @property
     def temperature(self) -> int:
-        """Returns meter temperature."""
-        self.send(tools.make_cmd_msg(self.OBISCodes.temperature))
-        return int(tools.parse_data_msg(self.recv(16)).data)
+        """Meter temperature [°С]."""
+        self.send(tools.make_cmd_msg(self.obis_codes.temperature))
+        temp_str = tools.parse_data_msg(self.recv(16)).data[0]
+        if temp_str[0] == "1":
+            temp_str = f"-{temp_str[1:]}"
+        return int(temp_str)
 
     def send(self, message: bytes):
         """Sends sequence of bytes to meter."""
         self.__session.write(message)
 
     def recv(self, size: int = None, expected: bytes = b"\x03") -> bytes:
-        """
-        Returns sequence of bytes received from meter.
-        Without args (by default) it reads up to expected ETX char.
-        If size was specified it reads size bytes.
-        If expected == None and size == None and session by RFC2217 protocol
-        read all before timeout.
+        """Read sequence of bytes from the meter.
+
+        If expected == None and size == None and session by RFC2217 protocol,
+        the RawIOBase.readall method is called (read all bytes before timeout).
+
+        Args:
+            size: size of bytes, None by default.
+                If specified, the Serial.read method is called (read
+                 size bytes).
+            expected: expected sequence, ETX char by default.
+                If specified, SerialBase.read_until method is called (reads
+                until an expected sequence is found).
+
+        Returns:
+            sequence of bytes
+
+        Raises:
+            ResponseError: if `expected` is ETX character, but the last
+             2 chars are not received.
         """
         if (self.__is_rfc2217 or not expected) and not size:
             return self.__session.readall()
@@ -195,112 +265,65 @@ class MeterBase:
             self.__session.flushInput()
             return resp
 
-    def __del__(self):
-        if self.__session.is_open:
-            self.send(b"\x01B0\x03q")
-            self.__session.flush()
+    def close_session(self):
+        self.send(b"\x01B0\x03q")
+        self.__session.flush()
+
+    def __read_id_msg(self) -> int:
+        try:
+            msg = tools.parse_id_msg(self.recv(21))
+            self.__device_identifier = msg.identifier
+        except ResponseError as e:
             self.__session.__del__()
+            raise MeterConnectionError(e) from None
+        return msg.baudrate_num
+
+    def __read_password_msg(self):
+        try:
+            # In my case the first (SOH) character is usually not received
+            if self.__is_rfc2217:
+                pass_msg = self.recv(15)
+                # If not received first (SOH) char
+                if pass_msg[0] != 1:
+                    pass_msg = b"\x01" + pass_msg
+                # If not received last (BCC) char
+                if pass_msg[-1] == 3:
+                    pass_msg += self.recv(1)
+            else:
+                pass_msg = self.recv(16)
+            if not self.__password:
+                self.__password = tools.parse_password_msg(pass_msg)
+        except (ResponseError, IndexError) as e:
+            self.__session.__del__()
+            raise MeterConnectionError(e) from None
+
+    def __read_ack_msg(self):
+        try:
+            msg = self.recv(1)
+            if msg != b"\x06":
+                msg += self.recv()
+            tools.check_err(msg)
+        except ResponseError as e:
+            self.__session.__del__()
+            raise MeterConnectionError(f"expected ACK message, but {e}") from None
+        else:
+            if msg != b"\x06":
+                self.__session.__del__()
+                raise MeterConnectionError(f"expected ACK message, but received {msg}") from None
+
+    def __del__(self):
+        self.__session.__del__()
 
     def __str__(self) -> str:
-        return f"[{self.model} : {self.address}]"
+        return f"[{self.identifier} : {self.address}]"
 
     def __repr__(self) -> str:
         return f"Meter({self.__interface!r}, {self.address!r})"
 
     def __enter__(self):
+        self.start_session()
         return self
 
     def __exit__(self, exc_type, exc_value, traceback):
+        self.close_session()
         self.__del__()
-
-
-class MultiTariffMeter(MeterBase):
-    """Base class for multi-tariff meters."""
-
-    @property
-    def total_energy(self) -> TotalEnergy:
-        """Returns сumulative active energy in tariffs T1, T2, T3, T4 and total [kWh]."""
-        self.send(tools.make_cmd_msg(self.OBISCodes.total_energy))
-        return TotalEnergy(*tools.parse_data_msg(self.recv(62)).data)
-
-
-class ThreePhaseMeter(MeterBase):
-    """Base class for three-phase meters."""
-
-    @property
-    def voltage_a(self) -> float:
-        """Returns instantaneous voltage in phase A (L1) [V]."""
-        self.send(tools.make_cmd_msg(self.OBISCodes.voltage_A))
-        return tools.parse_data_msg(self.recv(20)).data
-
-    @property
-    def voltage_b(self) -> float:
-        """Returns instantaneous voltage in phase B (L2) [V]."""
-        self.send(tools.make_cmd_msg(self.OBISCodes.voltage_B))
-        return tools.parse_data_msg(self.recv(20)).data
-
-    @property
-    def voltage_c(self) -> float:
-        """Returns instantaneous voltage in phase C (L3) [V]."""
-        self.send(tools.make_cmd_msg(self.OBISCodes.voltage_C))
-        return tools.parse_data_msg(self.recv(20)).data
-
-    @property
-    def voltage(self) -> Voltage:
-        """Returns instantaneous voltages of all phases [V]."""
-        return Voltage(phaseA=self.voltage_a, phaseB=self.voltage_b, phaseC=self.voltage_c)
-
-    @property
-    def active_power_a(self) -> float:
-        """Returns active instantaneous power in phase A (L1) [W]."""
-        self.send(tools.make_cmd_msg(self.OBISCodes.active_power_A))
-        return tools.parse_data_msg(self.recv(20)).data
-
-    @property
-    def active_power_b(self) -> float:
-        """Returns active instantaneous power in phase B (L2) [W]."""
-        self.send(tools.make_cmd_msg(self.OBISCodes.active_power_B))
-        return tools.parse_data_msg(self.recv(20)).data
-
-    @property
-    def active_power_c(self) -> float:
-        """Returns active instantaneous power in phase C (L3) [W]."""
-        self.send(tools.make_cmd_msg(self.OBISCodes.active_power_C))
-        return tools.parse_data_msg(self.recv(20)).data
-
-    @property
-    def active_power_sum(self) -> float:
-        """Returns sum of active instantaneous power of all phases [W]."""
-        self.send(tools.make_cmd_msg(self.OBISCodes.active_power_sum))
-        return tools.parse_data_msg(self.recv(20)).data
-
-    @property
-    def active_power(self) -> ActivePower:
-        """Returns active instantaneous power of all phases and their sum [W]."""
-        return ActivePower(sum=self.active_power_sum,
-                           phaseA=self.active_power_a,
-                           phaseB=self.active_power_b,
-                           phaseC=self.active_power_c)
-
-
-class NevaMT3(MultiTariffMeter, ThreePhaseMeter):
-    """Class for working with electricity meters Neva MT 3xx."""
-
-    OBISCodes = OBISCodes(
-        total_energy="0F.08.80*FF",
-        voltage_A="20.07.00*FF",
-        voltage_B="34.07.00*FF",
-        voltage_C="48.07.00*FF",
-        active_power_A="24.07.00*FF",
-        active_power_B="38.07.00*FF",
-        active_power_C="4C.07.00*FF",
-        active_power_sum="10.07.00*FF",
-        serial_num="60.01.00*FF",
-        status="60.05.00*FF",
-        seasonal_schedules="0D.00.00*FF",
-        special_days_schedules="0B.00.00*FF",
-        tariff_schedule_obis="0A.%s.64*FF",
-        date="00.09.02*FF",
-        address="60.01.01*FF",
-        temperature="60.09.00*FF"
-    )

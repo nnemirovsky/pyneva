@@ -59,9 +59,9 @@ class TestTools(unittest.TestCase):
             parse_id_msg(b"/SAT5EM72000656621\r\n"),
         )
         second = (
-            IdentificationMsg(ident="NEVAMT324.1106", vendor="TPC", baudrate_num=5),
-            IdentificationMsg(ident="NEVAMT123.2302", vendor="CPz", baudrate_num=3),
-            IdentificationMsg(ident="EM72000656621", vendor="SAT", baudrate_num=5),
+            IdentificationMsg(identifier="NEVAMT324.1106", vendor="TPC", baudrate_num=5),
+            IdentificationMsg(identifier="NEVAMT123.2302", vendor="CPz", baudrate_num=3),
+            IdentificationMsg(identifier="EM72000656621", vendor="SAT", baudrate_num=5),
         )
         self.assertEqual(first, second)
 
