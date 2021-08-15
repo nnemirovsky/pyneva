@@ -15,6 +15,7 @@ connect_description = "\033[31mAttention! Raw OBIS commands are much slower than
                       "prepared values.\nCLI version does not support write mode!\033[0m"
 parser = argparse.ArgumentParser(prog='pyneva',
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
+parser.add_argument("-v", "--version", action='version', version=f"%(prog)s {__version__}")
 
 subparsers = parser.add_subparsers()
 
@@ -25,7 +26,6 @@ connect = subparsers.add_parser(
           "[-v [value(-s)]] [--obis [code(-s)]]"
 )
 connect.set_defaults(parser=connect)
-connect.add_argument("-v", "--version", action='version', version=f"%(prog)s {__version__}")
 
 connect.add_argument("-i", "--interface", required=True,
                      help="serial interface (can be RFC2217 uri)")
