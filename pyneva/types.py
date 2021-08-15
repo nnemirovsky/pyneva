@@ -13,12 +13,6 @@ class IdentificationMsg(NamedTuple):
     vendor: str
 
 
-class CommandMsg(NamedTuple):
-    data: bytes
-    command: str
-    address: str = ""
-
-
 class ActiveEnergy(NamedTuple):
     total: float
     T1: float

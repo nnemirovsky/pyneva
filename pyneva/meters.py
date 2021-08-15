@@ -6,22 +6,22 @@ from .core import MeterBase
 class NevaMT3(MeterBase):
     """Base class for three-phase meters (Neva MT 3xx)."""
 
-    def __init__(self, interface: str, address: str = "", password: str = "",
-                 initial_baudrate: int = 0):
-        super().__init__(interface, address, password, initial_baudrate)
-        self.obis_codes.voltage_l1 = "20.07.00*FF"
-        self.obis_codes.voltage_l2 = "34.07.00*FF"
-        self.obis_codes.voltage_l3 = "48.07.00*FF"
-        self.obis_codes.active_power_l1 = "24.07.00*FF"
-        self.obis_codes.active_power_l2 = "38.07.00*FF"
-        self.obis_codes.active_power_l3 = "4C.07.00*FF"
-        self.obis_codes.active_power_sum = "10.07.00*FF"
-        self.obis_codes.current_l1 = "1F.07.00*FF"
-        self.obis_codes.current_l2 = "33.07.00*FF"
-        self.obis_codes.current_l3 = "47.07.00*FF"
-        self.obis_codes.power_factor_l1 = "21.07.FF*FF"
-        self.obis_codes.power_factor_l2 = "35.07.FF*FF"
-        self.obis_codes.power_factor_l3 = "49.07.FF*FF"
+    # def __init__(self, interface: str, address: str = "", password: str = "",
+    #              initial_baudrate: int = 0):
+    #     super().__init__(interface, address, password, initial_baudrate)
+    #     self.obis_codes.voltage_l1 = "20.07.00*FF"
+    #     self.obis_codes.voltage_l2 = "34.07.00*FF"
+    #     self.obis_codes.voltage_l3 = "48.07.00*FF"
+    #     self.obis_codes.active_power_l1 = "24.07.00*FF"
+    #     self.obis_codes.active_power_l2 = "38.07.00*FF"
+    #     self.obis_codes.active_power_l3 = "4C.07.00*FF"
+    #     self.obis_codes.active_power_sum = "10.07.00*FF"
+    #     self.obis_codes.current_l1 = "1F.07.00*FF"
+    #     self.obis_codes.current_l2 = "33.07.00*FF"
+    #     self.obis_codes.current_l3 = "47.07.00*FF"
+    #     self.obis_codes.power_factor_l1 = "21.07.FF*FF"
+    #     self.obis_codes.power_factor_l2 = "35.07.FF*FF"
+    #     self.obis_codes.power_factor_l3 = "49.07.FF*FF"
 
     @property
     def voltage_l1(self) -> float:
@@ -128,18 +128,18 @@ class NevaMT3(MeterBase):
 
 class NevaMT3R(NevaMT3):
     """Class for meters Neva MT3XX supporting reactive energy."""
-
-    def __init__(self, interface: str, address: str = "", password: str = "",
-                 initial_baudrate: int = 0):
-        super().__init__(interface, address, password, initial_baudrate)
-        self.obis_codes.positive_reactive_power_l1 = "17.07.01*FF"
-        self.obis_codes.negative_reactive_power_l1 = "18.07.01*FF"
-        self.obis_codes.positive_reactive_power_l2 = "2B.07.01*FF"
-        self.obis_codes.negative_reactive_power_l2 = "2C.07.01*FF"
-        self.obis_codes.positive_reactive_power_l3 = "3F.07.01*FF"
-        self.obis_codes.negative_reactive_power_l3 = "40.07.01*FF"
-        self.obis_codes.positive_reactive_power_sum = "03.07.01*FF"
-        self.obis_codes.negative_reactive_power_sum = "04.07.01*FF"
+    #
+    # def __init__(self, interface: str, address: str = "", password: str = "",
+    #              initial_baudrate: int = 0):
+    #     super().__init__(interface, address, password, initial_baudrate)
+    #     self.obis_codes.positive_reactive_power_l1 = "17.07.01*FF"
+    #     self.obis_codes.negative_reactive_power_l1 = "18.07.01*FF"
+    #     self.obis_codes.positive_reactive_power_l2 = "2B.07.01*FF"
+    #     self.obis_codes.negative_reactive_power_l2 = "2C.07.01*FF"
+    #     self.obis_codes.positive_reactive_power_l3 = "3F.07.01*FF"
+    #     self.obis_codes.negative_reactive_power_l3 = "40.07.01*FF"
+    #     self.obis_codes.positive_reactive_power_sum = "03.07.01*FF"
+    #     self.obis_codes.negative_reactive_power_sum = "04.07.01*FF"
 
     @property
     def positive_reactive_power_l1(self) -> float:

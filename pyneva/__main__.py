@@ -2,9 +2,8 @@ import argparse
 import sys
 
 from . import __version__
-from . import tools
 from . import meters
-# from .core import NevaMT324AOS, NevaMT3R, NevaMT324R
+from . import tools
 from .types import MeterConnectionError, ResponseError
 
 
@@ -12,23 +11,18 @@ def is_property(klass, attr: str) -> bool:
     return type(getattr(klass, attr)) == property and "__" not in attr
 
 
-# FUNCTIONS = frozenset(filter(is_property, dir(NevaMT324AOS)))
-
 connect_description = "\033[31mAttention! Raw OBIS commands are much slower than " \
                       "prepared values.\nCLI version does not support write mode!\033[0m"
-parser = argparse.ArgumentParser(
-    # usage=,
-    prog='pyneva',
-    formatter_class=argparse.RawDescriptionHelpFormatter
-)
+parser = argparse.ArgumentParser(prog='pyneva',
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
 
 subparsers = parser.add_subparsers()
 
 connect = subparsers.add_parser(
     'connect', help='connect help', description=connect_description,
     formatter_class=lambda prog: argparse.RawDescriptionHelpFormatter(prog, max_help_position=40),
-    usage="%(prog)s -i INTERFACE -m MODEL [-b BAUDRATE] [-a ADDRESS] [-p PASSWORD] [--val [...]] "
-          "[--obis [...]]"
+    usage="%(prog)s -i INTERFACE -m MODEL [-b BAUDRATE] [-a ADDRESS] [-p PASSWORD] "
+          "[-v [value(-s)]] [--obis [code(-s)]]"
 )
 connect.set_defaults(parser=connect)
 connect.add_argument("-v", "--version", action='version', version=f"%(prog)s {__version__}")
@@ -41,7 +35,7 @@ connect.add_argument("-b", "--baudrate", default=300, type=int,
                      help="initial baudrate (default: 300), specify 9600 for RS485")
 connect.add_argument("-a", "--addr", dest="address", default="", help="meter address")
 connect.add_argument("-p", "--password", dest="password", default="", help="meter password")
-connect.add_argument("--val", nargs='*', default="", metavar="",
+connect.add_argument("-v", "--val", nargs='*', default="", metavar="",
                      help="prepared value(-s). The available values for your meter can be "
                           "obtained from the command `get-values`")
 connect.add_argument("--obis", nargs='*', default="", metavar="",
@@ -74,8 +68,10 @@ if fn in ("connect", "get-values"):
     cls = vars(meters)[args.model]
 
 if fn == "get-model":
-    tools.start_without_model(interface=args.interface, address=args.address,
-                              initial_baudrate=args.baudrate, do_not_open=True)
+    klass = tools.start_without_model(interface=args.interface, address=args.address,
+                                      initial_baudrate=args.baudrate, do_not_open=True)
+    print("Class that you need:", klass.__name__)
+
 if fn == "get-values":
     values = frozenset(filter(lambda x: is_property(cls, x), dir(cls)))
     print(f"Possible values are {', '.join(sorted(values))}. But some may not be supported by "

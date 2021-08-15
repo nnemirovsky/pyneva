@@ -1,3 +1,4 @@
+from collections import namedtuple
 from datetime import datetime
 from time import sleep
 
@@ -25,7 +26,21 @@ class MeterBase:
                            tariff_schedule="0A.%s.64*FF", firmware_id="60.01.04*FF",
                            frequency="0E.07.01*FF", datetime="00.09.80*FF",
                            active_energy="0F.08.80*FF", active_energy_prev_month="0F.08.80*00",
-                           active_energy_prev_day="0F.80.80*00")
+                           active_energy_prev_day="0F.80.80*00", voltage_l1="20.07.00*FF",
+                           voltage_l2="34.07.00*FF", voltage_l3="48.07.00*FF",
+                           active_power_l1="24.07.00*FF", active_power_l2="38.07.00*FF",
+                           active_power_l3="4C.07.00*FF", active_power_sum="10.07.00*FF",
+                           current_l1="1F.07.00*FF", current_l2="33.07.00*FF",
+                           current_l3="47.07.00*FF", power_factor_l1="21.07.FF*FF",
+                           power_factor_l2="35.07.FF*FF", power_factor_l3="49.07.FF*FF",
+                           positive_reactive_power_l1="17.07.01*FF",
+                           negative_reactive_power_l1="18.07.01*FF",
+                           positive_reactive_power_l2="2B.07.01*FF",
+                           negative_reactive_power_l2="2C.07.01*FF",
+                           positive_reactive_power_l3="3F.07.01*FF",
+                           negative_reactive_power_l3="40.07.01*FF",
+                           positive_reactive_power_sum="03.07.01*FF",
+                           negative_reactive_power_sum="04.07.01*FF")
 
     def __init__(self, interface: str, address: str = "", password: str = "",
                  initial_baudrate: int = 0):
@@ -44,7 +59,7 @@ class MeterBase:
         self.__is_rfc2217 = isinstance(self.__session, rfc2217Serial)
 
     def start_session(self):
-        """Starting serial session according to protocol 61107 in programming mode."""
+        """Starting serial session according to protocol IEC 61107 in programming mode."""
         self.__session.open()
 
         # Send request message
@@ -68,33 +83,39 @@ class MeterBase:
 
     @property
     def seasonal_schedules(self) -> tuple[SeasonalSchedule, ...]:
-        """Returns tuple with seasonal schedules.
+        """Return tuple with seasonal schedules.
         Each schedule specifies from which date the tariff starts,
         and the numbers of tariff schedules on weekdays, Saturdays, Sundays separately.
         """
         self.send(tools.make_cmd_msg(self.obis_codes.seasonal_schedules))
         schedules = tools.parse_data_msg(self.recv(144)).data
+        schedules = tools.parse_schedules(schedules)
         schedules = tuple(
-            map(lambda skd: SeasonalSchedule(*skd), tools.parse_schedules(schedules))
+            self.__parse_into_used_schedules(SeasonalSchedule, skd, (2, 3, 4)) for skd in schedules
         )
-        for schedule in schedules:
-            self.__used_tariff_schedules.update(schedule[2:])
         return schedules
 
     @property
     def special_days_schedules(self) -> tuple[SpecialDaysSchedule, ...]:
-        """Returns tuple with special days schedules.
+        """Return tuple with special days schedules.
         Each schedule includes date and tariff schedule number.
         """
         self.send(tools.make_cmd_msg(self.obis_codes.special_days_schedules))
         days = tools.parse_data_msg(self.recv(236)).data
-        days = tuple(map(lambda skd: SpecialDaysSchedule(*skd), tools.parse_schedules(days)))
-        self.__used_tariff_schedules.update(map(lambda x: x.skd_num, days))
+        days = tools.parse_schedules(days)
+        days = tuple(
+            self.__parse_into_used_schedules(SpecialDaysSchedule, skd, (3,)) for skd in days
+        )
         return days
+
+    def __parse_into_used_schedules(self, struct: namedtuple, skd: tuple[int, ...],
+                                    nums: tuple[int, ...]) -> namedtuple:
+        self.__used_tariff_schedules.update(map(lambda i: skd[i], nums))
+        return struct(*skd)
 
     @property
     def tariff_schedules(self) -> tuple[TariffSchedule, ...]:
-        """Returns tuple with tariff schedules.
+        """Return tuple with tariff schedules.
         Each tariff schedule contains parts of the schedule.
         Each schedule part describes from what time of day the tariff starts,
         and tariff number.
@@ -106,7 +127,7 @@ class MeterBase:
             schedule_obis = self.obis_codes.tariff_schedule % f"{schedule_num:02X}"
             self.send(tools.make_cmd_msg(schedule_obis))
             schedule = tools.parse_schedules(tools.parse_data_msg(self.recv(68)).data)
-            schedule = tuple(map(lambda skd: TariffSchedulePart(*skd), schedule))
+            schedule = tuple(TariffSchedulePart(*skd_part) for skd_part in schedule)
             if schedule:
                 tariff_schedules.append(TariffSchedule(schedule))
         return tuple(tariff_schedules)
@@ -120,6 +141,20 @@ class MeterBase:
         return ActiveEnergy(*map(float, tools.parse_data_msg(self.recv(62)).data))
 
     @property
+    def active_energy_last_month(self) -> ActiveEnergy:
+        """Cumulative active energy for this month (Total, T1, ..., T4) [kWh]."""
+        zipped_values = zip(self.active_energy, self.__active_energy_prev_month)
+        calc_values = map(lambda x: round(x[0] - x[1], 2), zipped_values)
+        return ActiveEnergy(*calc_values)
+
+    @property
+    def active_energy_last_day(self) -> ActiveEnergy:
+        """Cumulative active energy for this day (Total, T1, ..., T4) [kWh]."""
+        zipped_values = zip(self.active_energy, self.__active_energy_prev_day)
+        calc_values = map(lambda x: round(x[0] - x[1], 2), zipped_values)
+        return ActiveEnergy(*calc_values)
+
+    @property
     def __active_energy_prev_month(self) -> ActiveEnergy:
         """Cumulative active energy from the first start of measurement
         to the beginning of this month (Total, T1, ..., T4) [kWh].
@@ -128,28 +163,12 @@ class MeterBase:
         return ActiveEnergy(*map(float, tools.parse_data_msg(self.recv(62)).data))
 
     @property
-    def active_energy_last_month(self) -> ActiveEnergy:
-        """Cumulative active energy for this month (Total, T1, ..., T4) [kWh]."""
-        return ActiveEnergy(
-            *map(lambda x: round(x[0] - x[1], 2),
-                 zip(self.active_energy, self.__active_energy_prev_month))
-        )
-
-    @property
     def __active_energy_prev_day(self) -> ActiveEnergy:
         """Cumulative active energy from the first start of measurement
         to the beginning of this day (Total, T1, ..., T4) [kWh].
         """
         self.send(tools.make_cmd_msg(self.obis_codes.active_energy_prev_day))
         return ActiveEnergy(*map(float, tools.parse_data_msg(self.recv(62)).data))
-
-    @property
-    def active_energy_last_day(self) -> ActiveEnergy:
-        """Cumulative active energy for this day (Total, T1, ..., T4) [kWh]."""
-        return ActiveEnergy(
-            *map(lambda x: round(x[0] - x[1], 2),
-                 zip(self.active_energy, self.__active_energy_prev_day))
-        )
 
     @property
     def frequency(self) -> float:
@@ -225,8 +244,51 @@ class MeterBase:
             temp_str = f"-{temp_str[1:]}"
         return int(temp_str)
 
+    def __read_id_msg(self) -> int:
+        try:
+            msg = tools.parse_id_msg(self.recv(21))
+            self.__device_identifier = msg.identifier
+        except ResponseError as e:
+            self.__session.__del__()
+            raise MeterConnectionError(e) from None
+        return msg.baudrate_num
+
+    def __read_password_msg(self):
+        try:
+            # In my case the first (SOH) character is usually not received
+            if self.__is_rfc2217:
+                pass_msg = self.recv(15)
+                # If not received first (SOH) char
+                if pass_msg[0] != 1:
+                    pass_msg = b"\x01" + pass_msg
+                # If not received last (BCC) char
+                if pass_msg[-1] == 3:
+                    pass_msg += self.recv(1)
+            else:
+                pass_msg = self.recv(16)
+
+            if not self.__password:
+                self.__password = tools.parse_password_msg(pass_msg)
+        except (ResponseError, IndexError) as e:
+            self.__session.__del__()
+            raise MeterConnectionError(e) from None
+
+    def __read_ack_msg(self):
+        try:
+            msg = self.recv(1)
+            if msg != b"\x06":
+                msg += self.recv()
+            tools.check_err(msg)
+        except ResponseError as e:
+            self.__session.__del__()
+            raise MeterConnectionError(f"expected ACK message, but {e}") from None
+        else:
+            if msg != b"\x06":
+                self.__session.__del__()
+                raise MeterConnectionError(f"expected ACK message, but received {msg}") from None
+
     def send(self, message: bytes):
-        """Sends sequence of bytes to meter."""
+        """Send sequence of bytes to meter."""
         self.__session.write(message)
 
     def recv(self, size: int = None, expected: bytes = b"\x03") -> bytes:
@@ -269,48 +331,6 @@ class MeterBase:
         self.send(b"\x01B0\x03q")
         self.__session.flush()
 
-    def __read_id_msg(self) -> int:
-        try:
-            msg = tools.parse_id_msg(self.recv(21))
-            self.__device_identifier = msg.identifier
-        except ResponseError as e:
-            self.__session.__del__()
-            raise MeterConnectionError(e) from None
-        return msg.baudrate_num
-
-    def __read_password_msg(self):
-        try:
-            # In my case the first (SOH) character is usually not received
-            if self.__is_rfc2217:
-                pass_msg = self.recv(15)
-                # If not received first (SOH) char
-                if pass_msg[0] != 1:
-                    pass_msg = b"\x01" + pass_msg
-                # If not received last (BCC) char
-                if pass_msg[-1] == 3:
-                    pass_msg += self.recv(1)
-            else:
-                pass_msg = self.recv(16)
-            if not self.__password:
-                self.__password = tools.parse_password_msg(pass_msg)
-        except (ResponseError, IndexError) as e:
-            self.__session.__del__()
-            raise MeterConnectionError(e) from None
-
-    def __read_ack_msg(self):
-        try:
-            msg = self.recv(1)
-            if msg != b"\x06":
-                msg += self.recv()
-            tools.check_err(msg)
-        except ResponseError as e:
-            self.__session.__del__()
-            raise MeterConnectionError(f"expected ACK message, but {e}") from None
-        else:
-            if msg != b"\x06":
-                self.__session.__del__()
-                raise MeterConnectionError(f"expected ACK message, but received {msg}") from None
-
     def __del__(self):
         self.__session.__del__()
 
@@ -318,7 +338,8 @@ class MeterBase:
         return f"[{self.identifier} : {self.address}]"
 
     def __repr__(self) -> str:
-        return f"Meter({self.__interface!r}, {self.address!r})"
+        return f"{self.__class__.__name__}({self.__interface!r}, {self.address!r}, " \
+               f"{self.__password.decode('ascii')!r}, {self.__init_baudrate})"
 
     def __enter__(self):
         self.start_session()

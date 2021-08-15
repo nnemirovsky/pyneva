@@ -1,8 +1,8 @@
 import unittest
 
-from pyneva.types import SeasonalSchedule, IdentificationMsg, ResponseError, WrongBCC
 from pyneva.tools import make_cmd_msg, parse_data_msg, parse_id_msg, parse_password_msg, \
     parse_schedules, calculate_bcc
+from pyneva.types import SeasonalSchedule, IdentificationMsg, ResponseError, WrongBCC
 
 
 class TestTools(unittest.TestCase):
@@ -38,9 +38,9 @@ class TestTools(unittest.TestCase):
             ).data,
         )
         second = (
-            "60089784",
-            134.2,
-            (4.819, 4.8457, 2.5359, 0.0, 0.0),
+            ("60089784",),
+            ("00134.2",),
+            ("04.8190", "04.8457", "02.5359", "00.0000", "00.0000"),
             ("070001", "230002", "000000", "000000", "000000", "000000", "000000", "000000"),
         )
         self.assertEqual(first, second)
